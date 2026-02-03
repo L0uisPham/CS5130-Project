@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 from PIL import Image
+import numpy as np
 
 CHEXPERT_LABELS_14 = [
     "No Finding",
@@ -29,6 +30,13 @@ class CheXpertDataset(Dataset):
         self.labels = labels
         self.transform = transform
 
+        self.df[self.labels] = self.df[self.labels].apply(
+            pd.to_numeric, errors="coerce"
+        )
+
+        self.df[self.labels] = self.df[self.labels].fillna(0.0)
+        self.df[self.labels] = self.df[self.labels].replace(-1.0, 0.0)
+
     def __len__(self):
         return len(self.df)
 
@@ -37,8 +45,7 @@ class CheXpertDataset(Dataset):
         img_path = row["abs_path"]
         img = Image.open(img_path).convert("RGB")
 
-        y = torch.tensor(row[self.labels].values, dtype=torch.float32)
-
+        y = torch.from_numpy(row[self.labels].to_numpy(dtype=np.float32))
         if self.transform:
             img = self.transform(img)
 
