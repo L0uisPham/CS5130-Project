@@ -4,13 +4,17 @@ from typing import List, Tuple
 from skmultilearn.model_selection import iterative_train_test_split
 
 
-def clean_chexpert_labels(df: pd.DataFrame, labels: List[str]) -> pd.DataFrame:
+def clean_chexpert_labels(
+    df: pd.DataFrame,
+    labels: List[str],
+    uncertain_value: float
+) -> pd.DataFrame:
     df = df.copy()
 
     df[labels] = (
         df[labels]
         .apply(pd.to_numeric, errors="coerce")
-        .replace(-1, 0.5)
+        .replace(-1, uncertain_value)
         .fillna(0)
         .astype("float32")
     )
@@ -73,7 +77,8 @@ def print_label_distribution(df: pd.DataFrame, labels: List[str], title: str):
 
 
 def build_stratified_chexpert_split(
-    input_csv: str,
+    train_csv: str,
+    valid_csv: str,
     train_out: str,
     val_out: str,
     test_out: str,
@@ -81,21 +86,31 @@ def build_stratified_chexpert_split(
     val_fraction: float,
     test_size: int
 ):
-    df = pd.read_csv(input_csv)
+    df_train = pd.read_csv(train_csv)
+    df_valid = pd.read_csv(valid_csv)
 
-    df = clean_chexpert_labels(df, labels)
-
-    train_df, val_df, test_df = iterative_multilabel_split_3way(
-        df, labels, val_fraction, test_size
+    # ---- Split train into stratified train/val/test ----
+    train_df, val_df_strat, test_df = iterative_multilabel_split_3way(
+        df_train, labels, val_fraction, test_size
     )
+
+    # ---- Clean train and test ----
+    train_df = clean_chexpert_labels(train_df, labels, uncertain_value=0.5)
+    test_df  = clean_chexpert_labels(test_df, labels, uncertain_value=0.0)
+
+    # ---- Clean original valid and combine with stratified val ----
+    val_df_strat = clean_chexpert_labels(val_df_strat, labels, uncertain_value=0.0)
+    df_valid    = clean_chexpert_labels(df_valid, labels, uncertain_value=0.0)
+    val_df      = pd.concat([val_df_strat, df_valid], ignore_index=True)
+
+    # ---- Save ----
+    train_df.to_csv(train_out, index=False)
+    val_df.to_csv(val_out, index=False)
+    test_df.to_csv(test_out, index=False)
 
     print_label_distribution(train_df, labels, "Train label counts")
     print_label_distribution(val_df, labels, "Validation label counts")
     print_label_distribution(test_df, labels, "Test label counts")
-
-    train_df.to_csv(train_out, index=False)
-    val_df.to_csv(val_out, index=False)
-    test_df.to_csv(test_out, index=False)
 
     print("\n✓ Stratified train / val / test CSVs saved")
     print(f"Train: {len(train_df)} samples")
@@ -108,7 +123,8 @@ def build_stratified_chexpert_split(
 # --------------------------------------------------
 if __name__ == "__main__":
 
-    INPUT_CSV = "data/CheXpert-v1.0-small/train.csv"
+    TRAIN_CSV = "data/CheXpert-v1.0-small/train.csv"
+    VALID_CSV = "data/CheXpert-v1.0-small/valid.csv"
     TRAIN_OUT = "data/CheXpert-v1.0-small/train_strat.csv"
     VAL_OUT = "data/CheXpert-v1.0-small/valid_strat.csv"
     TEST_OUT = "data/CheXpert-v1.0-small/test_strat.csv"
@@ -125,7 +141,8 @@ if __name__ == "__main__":
     ]
 
     build_stratified_chexpert_split(
-        INPUT_CSV,
+        TRAIN_CSV,
+        VALID_CSV,
         TRAIN_OUT,
         VAL_OUT,
         TEST_OUT,

@@ -76,3 +76,39 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+OUTPUT
+
+Random test sample index: 122
+
+Predicted probabilities:
+  Atelectasis: 0.6936
+  Cardiomegaly: 0.3909
+  Consolidation: 0.8258
+  Edema: 0.8562
+  Enlarged Cardiomediastinum: 0.5988
+  Fracture: 0.1028
+  Lung Lesion: 0.2068
+  Lung Opacity: 0.5846
+  Pleural Effusion: 0.9498
+  Pleural Other: 0.2405
+  Pneumonia: 0.2055
+  Pneumothorax: 0.1419
+  Support Devices: 0.9114
+
+Ground truth labels:
+  Atelectasis: 0
+  Cardiomegaly: 0
+  Consolidation: 1
+  Edema: 0
+  Enlarged Cardiomediastinum: 0
+  Fracture: 0
+  Lung Lesion: 0
+  Lung Opacity: 0
+  Pleural Effusion: 1
+  Pleural Other: 0
+  Pneumonia: 0
+  Pneumothorax: 0
+  Support Devices: 0
+"""
