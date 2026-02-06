@@ -218,7 +218,6 @@ __marimo__/
 # Custom ignores
 data/
 CheXpert-v1.0-small/
-datasets/
 *.zip
 models/*
 !models/.gitkeep
