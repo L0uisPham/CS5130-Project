@@ -1,0 +1,4 @@
+model:
+  name: convnext_timm
+  pretrained: true
+  timm_name: convnext_tiny
