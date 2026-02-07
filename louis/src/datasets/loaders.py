@@ -95,6 +95,8 @@ def build_dataloaders(cfg) -> Dict[str, DataLoader]:
     batch_size = int(data_cfg.get("batch_size", 32))
     num_workers = int(data_cfg.get("num_workers", 4))
     pin_memory = bool(data_cfg.get("pin_memory", True))
+    prefetch_factor = int(data_cfg.get("prefetch_factor", 2))
+    persistent_workers = bool(data_cfg.get("persistent_workers", num_workers > 0))
 
     return {
         "train": DataLoader(
@@ -103,6 +105,8 @@ def build_dataloaders(cfg) -> Dict[str, DataLoader]:
             shuffle=True,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor if num_workers > 0 else None,
+            persistent_workers=persistent_workers if num_workers > 0 else False,
             collate_fn=_collate_fn,
         ),
         "val": DataLoader(
@@ -111,6 +115,8 @@ def build_dataloaders(cfg) -> Dict[str, DataLoader]:
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor if num_workers > 0 else None,
+            persistent_workers=persistent_workers if num_workers > 0 else False,
             collate_fn=_collate_fn,
         ),
         "test": DataLoader(
@@ -119,6 +125,8 @@ def build_dataloaders(cfg) -> Dict[str, DataLoader]:
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor if num_workers > 0 else None,
+            persistent_workers=persistent_workers if num_workers > 0 else False,
             collate_fn=_collate_fn,
         ),
     }
