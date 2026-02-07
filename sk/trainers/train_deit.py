@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from sk.datasets.chexpert import CheXpertDataset
+from sk.dataset.chexpert import CheXpertDataset
 from sk.model_wrappers.deit import DeiTModel
 from sk.trainers.engine import train_one_epoch, validate
 
@@ -74,7 +74,6 @@ def main():
     # Model initialization
     # -------------------------
     model = DeiTModel(
-        model_name="deit_small_patch16_224",
         num_classes=train_dataset.num_classes,
         pretrained=True
     ).to(device)

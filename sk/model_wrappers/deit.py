@@ -10,7 +10,7 @@ class DeiTModel(BaseMultiLabelModel):
         model (torch.nn.Module): The underlying DeiT model from TIMM.
     """
 
-    def __init__(self, model_name: str, num_classes: int, pretrained=True):
+    def __init__(self, num_classes: int, pretrained=True):
         """
         Initializes the DeiT model.
 
@@ -22,7 +22,7 @@ class DeiTModel(BaseMultiLabelModel):
 
         super().__init__()
         self.model = create_model(
-            model_name,
+            "deit_small_patch16_224",
             pretrained=pretrained,
             num_classes=num_classes
         )

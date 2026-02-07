@@ -1,4 +1,3 @@
-# swin.py
 from timm import create_model
 from sk.model_wrappers.base import BaseMultiLabelModel
 
@@ -11,7 +10,7 @@ class SwinModel(BaseMultiLabelModel):
         model (torch.nn.Module): The underlying Swin model from TIMM.
     """
 
-    def __init__(self, model_name: str, num_classes: int, pretrained=True):
+    def __init__(self, num_classes: int, pretrained=True):
         """
         Initializes the Swin model.
 
@@ -22,7 +21,7 @@ class SwinModel(BaseMultiLabelModel):
         """
         super().__init__()
         self.model = create_model(
-            model_name,
+            "swin_tiny_patch4_window7_224",
             pretrained=pretrained,
             num_classes=num_classes
         )

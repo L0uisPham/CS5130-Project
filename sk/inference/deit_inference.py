@@ -1,7 +1,7 @@
 import random
 import torch
 from torchvision import transforms
-from sk.datasets.chexpert import CheXpertDataset
+from sk.dataset.chexpert import CheXpertDataset
 from sk.model_wrappers.deit import DeiTModel
 
 

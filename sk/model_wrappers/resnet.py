@@ -1,6 +1,7 @@
 from timm import create_model
 from sk.model_wrappers.base import BaseMultiLabelModel
 
+
 class ResNetModel(BaseMultiLabelModel):
     """
     Wrapper for a ResNet model for multi-label classification.
@@ -9,7 +10,7 @@ class ResNetModel(BaseMultiLabelModel):
         model (torch.nn.Module): The underlying ResNet model from TIMM.
     """
 
-    def __init__(self, model_name: str, num_classes: int, pretrained=True):
+    def __init__(self, num_classes: int, pretrained=True):
         """
         Initializes the ResNet model.
 
@@ -20,7 +21,7 @@ class ResNetModel(BaseMultiLabelModel):
         """
         super().__init__()
         self.model = create_model(
-            model_name,
+            "resnet34",
             pretrained=pretrained,
             num_classes=num_classes
         )

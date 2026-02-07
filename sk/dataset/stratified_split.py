@@ -133,7 +133,7 @@ class ProcessSplit:
         def print_label_distribution(df: pd.DataFrame, labels: list, title: str):
             print(f"\n{title}")
             for label in labels:
-                print(f"{label:25s}: {int(df[label].sum())}")
+                print(f"{label:26s}: {int(df[label].sum())}")
 
         train_strat.to_csv(self.output_dir / "train_strat.csv", index=False)
         valid_strat.to_csv(self.output_dir / "valid_strat.csv", index=False)
@@ -143,14 +143,15 @@ class ProcessSplit:
         label_cols = strat_cols  # LABEL_COLS + AGE_LABELS
 
         print_label_distribution(train_strat, label_cols, "Train label counts")
-        print_label_distribution(valid_strat, label_cols, "Validation label counts")
+        print_label_distribution(
+            valid_strat, label_cols, "Validation label counts")
         print_label_distribution(test_strat, label_cols, "Test label counts")
 
         # Print sample counts
         print("\nStratified train / val / test CSVs saved")
         print(f"Train: {len(train_strat)} samples")
-        print(f"Val:   {len(valid_strat)} samples")
-        print(f"Test:  {len(test_strat)} samples")
+        print(f"Valid:   {len(valid_strat)} samples")
+        print(f"Test :  {len(test_strat)} samples")
 
 
 def main():

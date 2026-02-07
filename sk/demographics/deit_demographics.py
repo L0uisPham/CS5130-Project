@@ -7,7 +7,7 @@ from sklearn.metrics import roc_auc_score, accuracy_score, mean_absolute_error
 from sklearn.model_selection import train_test_split
 import numpy as np
 
-from sk.datasets.chexpert import CheXpertDataset
+from sk.dataset.chexpert import CheXpertDataset
 from sk.model_wrappers.deit import DeiTModel
 
 # -------------------------------------------------
