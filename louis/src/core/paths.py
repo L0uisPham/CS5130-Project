@@ -8,7 +8,7 @@ def get_project_root() -> Path:
 
 
 def get_data_dir() -> Path:
-    return get_project_root() / "data"
+    return get_project_root() / "datasets"
 
 
 def get_processed_dir() -> Path:
@@ -17,4 +17,3 @@ def get_processed_dir() -> Path:
 
 def get_runs_dir() -> Path:
     return get_project_root() / "runs"
-

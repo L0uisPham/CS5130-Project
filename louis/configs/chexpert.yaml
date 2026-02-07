@@ -1,8 +1,8 @@
 data:
-  root_dir: ../data
-  train_csv: ../data/processed_chexpert_age_gender_split/train.csv
-  val_csv: ../data/processed_chexpert_age_gender_split/val.csv
-  test_csv: ../data/processed_chexpert_age_gender_split/test.csv
+  root_dir: ../datasets
+  train_csv: ../datasets/processed_chexpert_age_gender_split/train.csv
+  val_csv: ../datasets/processed_chexpert_age_gender_split/val.csv
+  test_csv: ../datasets/processed_chexpert_age_gender_split/test.csv
   batch_size: 32
   num_workers: 4
   pin_memory: true
