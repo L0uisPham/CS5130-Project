@@ -35,6 +35,7 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--from_scratch", action="store_true")
     args = parser.parse_args()
 
@@ -49,6 +50,9 @@ def main() -> None:
     if args.batch_size is not None:
         merged_cfg.setdefault("data", {})
         merged_cfg["data"]["batch_size"] = args.batch_size
+    if args.num_workers is not None:
+        merged_cfg.setdefault("data", {})
+        merged_cfg["data"]["num_workers"] = args.num_workers
 
     run_dir = make_run_dir(model_name=model_name, seed=args.seed)
     save_config(run_dir, merged_cfg)
