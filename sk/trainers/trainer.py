@@ -1,10 +1,8 @@
+import os
 from sklearn.metrics import roc_auc_score
 import torch
 from timm import create_model
 from sk.dataset.new_chexpert import CheXpert
-from sk.model_wrappers.deit import DeiTModel
-from sk.model_wrappers.swin import SwinModel
-from sk.model_wrappers.resnet import ResNetModel
 
 
 class Trainer:
@@ -12,8 +10,8 @@ class Trainer:
         "deit": "deit_small_patch16_224",
         "swin": "swin_tiny_patch4_window7_224",
         "resnet": "resnet34",
-        "vgg": "vgg_19_imagenet",
-        "efficient": "efficientnet-b4"
+        "vgg": "vgg19_bn",
+        "efficient": "efficientnet_b4"
     }
 
     NUM_EPOCHS = 10
@@ -35,116 +33,93 @@ class Trainer:
         self.valid_dataset = CheXpert("valid")
         self.test_dataset = CheXpert("test")
 
-        self.train_loader = CheXpert("train").get_loader()
-        self.valid_loader = CheXpert("valid").get_loader()
-        self.test_loader = CheXpert("test").get_loader()
+        self.train_loader = self.train_dataset.get_loader()
+        self.valid_loader = self.valid_dataset.get_loader()
+        self.test_loader = self.test_dataset.get_loader()
 
         self.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu")
 
         self.initialize_model()
+        self.loss_function_and_optimizer()
+
+        print(f"{self.model_name} model is ready for .training_loop()")
 
     def initialize_model(self):
         self.model = create_model(
             self.MODEL_NAME_DICTIONARY[self.model_name],
             pretrained=True,
             num_classes=self.train_dataset.num_classes
-        )
+        ).to(self.device)
 
-    def define_loss_function(self):
-        self.label_matrix = self.train_dataset.df[self.train_dataset.LABELS].values
-
-        self.pos_weight = torch.tensor(
-            (self.label_matrix.shape[0] - self.label_matrix.sum(axis=0)) /
-            (self.label_matrix.sum(axis=0) + 1e-6),
+    def loss_function_and_optimizer(self):
+        self.label_matrix = torch.tensor(
+            self.train_dataset.df[self.train_dataset.LABELS].values,
             dtype=torch.float32,
             device=self.device
         )
 
+        self.pos_weight = ((self.label_matrix.shape[0] - self.label_matrix.sum(
+            dim=0)) / (self.label_matrix.sum(dim=0) + 1e-6)).to(self.device)
+
         self.criterion = torch.nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
+
+        self.freeze_backbone()
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(), lr=self.LR_FULL)
+        self.best_val_loss = float("inf")
 
     def forward(self, x):
         return self.model(x)
 
     def freeze_backbone(self):
         if self.model_name in ["deit", "swin"]:
-            starts_with = "head"
-
-        if self.model_name in ["resnet", "vgg", "efficient"]:
-            starts_with = "fc"
+            head_name = "head"
+        elif self.model_name == "resnet":
+            head_name = "fc"
+        elif self.model_name in ["vgg", "efficient"]:
+            head_name = "classifier"
+        else:
+            raise ValueError(f"Unsupported model: {self.model_name}")
 
         for name, param in self.model.named_parameters():
-            if not name.startswith(starts_with):
-                param.requires_grad = False
-
-    def freeze_backbone_probing(self):
-        for param in self.model.parameters():
-            param.requires_grad = False
+            param.requires_grad = name.startswith(head_name)
 
     def unfreeze_backbone(self):
         for param in self.model.parameters():
             param.requires_grad = True
 
-    def train_one_epoch(self, loader, criterion, optimizer):
-        """
-        Trains the model for one epoch.
-
-        Args:
-            model (torch.nn.Module): Model to train.
-            loader (DataLoader): Training data loader.
-            criterion (torch.nn.Module): Loss function.
-            optimizer (torch.optim.Optimizer): Optimizer.
-            device (torch.device): Device to run training on.
-
-        Returns:
-            float: Average loss over the epoch.
-        """
-
+    def train_one_epoch(self, loader):
         self.model.train()
         total_loss = 0.0
 
         for images, labels in loader:
             images = images.to(self.device)
-            labels = labels.to(self.device)
+            labels = labels.float().to(self.device)
 
             outputs = self.model(images)
-            loss = criterion(outputs, labels)
+            loss = self.criterion(outputs, labels)
 
-            optimizer.zero_grad()
+            self.optimizer.zero_grad()
             loss.backward()
-            optimizer.step()
+            self.optimizer.step()
 
             total_loss += loss.item()
 
         return total_loss / len(loader)
 
     @torch.no_grad()
-    def validate(self, loader, criterion):
-        """
-        Evaluates the model on a validation set and computes AUROC for each class.
-
-        Args:
-            model (torch.nn.Module): Model to evaluate.
-            loader (DataLoader): Validation data loader.
-            criterion (torch.nn.Module): Loss function.
-            device (torch.device): Device to run evaluation on.
-            label_names (list of str): List of class names for AUROC calculation.
-
-        Returns:
-            tuple: (average_loss, aurocs) where average_loss is float and
-                aurocs is a dict mapping label names to AUROC scores.
-        """
-
+    def validate(self, loader):
         self.model.eval()
         total_loss = 0.0
         all_labels, all_preds = [], []
 
         for images, labels in loader:
             images = images.to(self.device)
-            labels = labels.to(self.device)
+            labels = labels.float().to(self.device)
 
             outputs = self.model(images)
-            loss = criterion(outputs, labels)
+            loss = self.criterion(outputs, labels)
 
             total_loss += loss.item()
             all_labels.append(labels.cpu())
@@ -161,3 +136,61 @@ class Trainer:
                 aurocs[name] = None
 
         return total_loss / len(loader), aurocs
+
+    def training_loop(self):
+        os.makedirs("sk/tuned_models", exist_ok=True)
+        orig_path = f"sk/tuned_models/best_{self.model_name}_model.pth"
+
+        for epoch in range(self.NUM_EPOCHS):
+            print(f"\nEpoch {epoch + 1}/{self.NUM_EPOCHS}")
+
+            if epoch == 0:
+                self.freeze_backbone()
+                self.optimizer = torch.optim.AdamW(
+                    filter(lambda p: p.requires_grad, self.model.parameters()),
+                    lr=self.LR_HEAD
+                )
+
+            if epoch == self.FREEZE_EPOCHS:
+                self.unfreeze_backbone()
+                self.optimizer = torch.optim.AdamW(
+                    self.model.parameters(),
+                    lr=self.LR_FULL
+                )
+
+            train_loss = self.train_one_epoch(self.train_loader)
+
+            val_loss, aurocs = self.validate(self.valid_loader)
+
+            print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+            for k, v in aurocs.items():
+                if v is not None:
+                    print(f"  {k}: {v:.4f}")
+
+            if val_loss < self.best_val_loss:
+                self.best_val_loss = val_loss
+                torch.save(self.model.state_dict(), orig_path)
+                print("Model saved!")
+
+        print("\nTraining complete")
+
+        print("\nEvaluating on test_strat set...")
+
+        self.model.load_state_dict(torch.load(
+            orig_path, map_location=self.device))
+        self.model.to(self.device)
+        self.model.eval()
+
+        test_loss, test_aurocs = self.validate(self.test_loader)
+
+        print(f"\nTest Loss: {test_loss:.4f}")
+        print("Test AUROC scores per pathology:")
+        for k, v in test_aurocs.items():
+            if v is not None:
+                print(f"  {k}: {v:.4f}")
+
+        safe_loss = int(test_loss * 10000)
+        new_path = f"sk/tuned_models/best_{self.model_name}_model_test_{safe_loss}.pth"
+        os.rename(orig_path, new_path)
+
+        print(f"Model file renamed to {new_path}!")
