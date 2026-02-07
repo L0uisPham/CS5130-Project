@@ -1,8 +1,9 @@
-from sk.dataset.new_chexpert import CheXpert
-from sk.trainers.trainer import Trainer
-
 if __name__ == "__main__":
-    from sk.trainers.trainer import Trainer
+    from sk.trainer import Trainer
 
-    t = Trainer("efficient")
+    t = Trainer("deit")
     t.training_loop()
+
+    from sk.inference.inference import Inference
+
+    i = Inference("deit")

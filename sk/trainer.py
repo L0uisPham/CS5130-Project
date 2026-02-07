@@ -2,7 +2,7 @@ import os
 from sklearn.metrics import roc_auc_score
 import torch
 from timm import create_model
-from sk.dataset.new_chexpert import CheXpert
+from sk.dataset.chexpert import CheXpert
 
 
 class Trainer:
@@ -43,7 +43,7 @@ class Trainer:
         self.initialize_model()
         self.loss_function_and_optimizer()
 
-        print(f"{self.model_name} model is ready for .training_loop()")
+        print(f"{self.model_name} model is ready for train!")
 
     def initialize_model(self):
         self.model = create_model(
@@ -139,7 +139,7 @@ class Trainer:
 
     def training_loop(self):
         os.makedirs("sk/tuned_models", exist_ok=True)
-        orig_path = f"sk/tuned_models/best_{self.model_name}_model.pth"
+        self.model_path = f"sk/tuned_models/best_{self.model_name}_model.pth"
 
         for epoch in range(self.NUM_EPOCHS):
             print(f"\nEpoch {epoch + 1}/{self.NUM_EPOCHS}")
@@ -169,7 +169,7 @@ class Trainer:
 
             if val_loss < self.best_val_loss:
                 self.best_val_loss = val_loss
-                torch.save(self.model.state_dict(), orig_path)
+                torch.save(self.model.state_dict(), self.model_path)
                 print("Model saved!")
 
         print("\nTraining complete")
@@ -177,7 +177,7 @@ class Trainer:
         print("\nEvaluating on test_strat set...")
 
         self.model.load_state_dict(torch.load(
-            orig_path, map_location=self.device))
+            self.model_path, map_location=self.device))
         self.model.to(self.device)
         self.model.eval()
 
@@ -189,8 +189,31 @@ class Trainer:
             if v is not None:
                 print(f"  {k}: {v:.4f}")
 
-        safe_loss = int(test_loss * 10000)
-        new_path = f"sk/tuned_models/best_{self.model_name}_model_test_{safe_loss}.pth"
-        os.rename(orig_path, new_path)
+"""
+OUTPUT
 
-        print(f"Model file renamed to {new_path}!")
+Epoch 1/10
+Train Loss: 0.9804 | Val Loss: 1.0891
+  No Finding: 0.8751
+  Enlarged Cardiomediastinum: 0.4919
+  Cardiomegaly: 0.6867
+  Lung Opacity: 0.7549
+  Lung Lesion: 0.5889
+  Edema: 0.7910
+  Consolidation: 0.7043
+  Pneumonia: 0.4918
+  Atelectasis: 0.7063
+  Pneumothorax: 0.7387
+  Pleural Effusion: 0.7500
+  Pleural Other: 0.8745
+  Fracture: 0.6864
+  Support Devices: 0.7807
+  sex_male: 0.8899
+  sex_female: 0.8913
+  age_0_29: 0.8732
+  age_30_44: 0.7826
+  age_45_59: 0.6382
+  age_60_74: 0.6332
+  age_75_plus: 0.8254
+Model saved!
+"""

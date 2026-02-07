@@ -22,6 +22,11 @@ class ProcessSplit:
         "Support Devices",
     ]
 
+    SEX_LABELS = [
+        "sex_male",
+        "sex_female"
+    ]
+
     AGE_BINS = [0, 30, 45, 60, 75, np.inf]
     AGE_LABELS = [
         "age_0_29",
@@ -42,10 +47,26 @@ class ProcessSplit:
         df_labels = df[self.LABEL_COLS].copy()
         df_labels = df_labels.replace(-1, 0)
         df[self.LABEL_COLS] = df_labels
-        # optionally fill Age NaN with median
         if "Age" in df.columns:
             df["Age"] = df["Age"].fillna(df["Age"].median())
         return df
+
+    def _add_sex_ohe(self, df):
+        sex = (
+            df["Sex"]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .map({
+                "male": "sex_male",
+                "female": "sex_female",
+            })
+        )
+
+        sex_ohe = pd.get_dummies(sex)
+        sex_ohe = sex_ohe.reindex(columns=self.SEX_LABELS, fill_value=0)
+
+        return pd.concat([df, sex_ohe], axis=1)
 
     def _add_age_bins(self, df):
         age_bins = pd.cut(
@@ -61,14 +82,14 @@ class ProcessSplit:
         train_df = self._load_and_clean(self.train_csv)
         valid_df = self._load_and_clean(self.valid_csv)
 
+        train_df = self._add_sex_ohe(train_df)
+        valid_df = self._add_sex_ohe(valid_df)
+
         train_df = self._add_age_bins(train_df)
         valid_df = self._add_age_bins(valid_df)
 
-        strat_cols = self.LABEL_COLS + self.AGE_LABELS
+        strat_cols = self.LABEL_COLS + self.SEX_LABELS + self.AGE_LABELS
 
-        # -----------------------
-        # Pull 234 stratified samples FROM TRAIN → VALID
-        # -----------------------
         X = train_df.drop(columns=strat_cols)
         y = train_df[strat_cols]
 
@@ -99,9 +120,6 @@ class ProcessSplit:
 
         valid_strat = pd.concat([valid_df, valid_add]).reset_index(drop=True)
 
-        # -----------------------
-        # Create TEST split (468) FROM remaining train
-        # -----------------------
         X2 = train_rem.drop(columns=strat_cols)
         y2 = train_rem[strat_cols]
 
@@ -139,15 +157,11 @@ class ProcessSplit:
         valid_strat.to_csv(self.output_dir / "valid_strat.csv", index=False)
         test_strat.to_csv(self.output_dir / "test_strat.csv", index=False)
 
-        # Print label distributions
-        label_cols = strat_cols  # LABEL_COLS + AGE_LABELS
-
-        print_label_distribution(train_strat, label_cols, "Train label counts")
+        print_label_distribution(train_strat, strat_cols, "Train label counts")
         print_label_distribution(
-            valid_strat, label_cols, "Validation label counts")
-        print_label_distribution(test_strat, label_cols, "Test label counts")
+            valid_strat, strat_cols, "Validation label counts")
+        print_label_distribution(test_strat, strat_cols, "Test label counts")
 
-        # Print sample counts
         print("\nStratified train / val / test CSVs saved")
         print(f"Train: {len(train_strat)} samples")
         print(f"Valid:   {len(valid_strat)} samples")
@@ -171,70 +185,76 @@ if __name__ == "__main__":
 OUTPUT
 
 Train label counts
-No Finding               : 22311
-Enlarged Cardiomediastinum: 10762
-Cardiomegaly             : 26907
-Lung Opacity             : 105244
-Lung Lesion              : 9152
-Edema                    : 52080
-Consolidation            : 14729
-Pneumonia                : 6016
-Atelectasis              : 33257
-Pneumothorax             : 19377
-Pleural Effusion         : 85906
-Pleural Other            : 3511
-Fracture                 : 9005
-Support Devices          : 115629
-age_0_29                 : 15286
-age_30_44                : 27028
-age_45_59                : 58006
-age_60_74                : 68087
-age_75_plus              : 54275
+No Finding                : 22310
+Enlarged Cardiomediastinum: 10764
+Cardiomegaly              : 26906
+Lung Opacity              : 105240
+Lung Lesion               : 9156
+Edema                     : 52076
+Consolidation             : 14734
+Pneumonia                 : 6024
+Atelectasis               : 33261
+Pneumothorax              : 19379
+Pleural Effusion          : 85889
+Pleural Other             : 3500
+Fracture                  : 9005
+Support Devices           : 115627
+sex_male                  : 132217
+sex_female                : 90464
+age_0_29                  : 15287
+age_30_44                 : 27030
+age_45_59                 : 57999
+age_60_74                 : 68093
+age_75_plus               : 54272
 
 Validation label counts
-No Finding               : 61
-Enlarged Cardiomediastinum: 121
-Cardiomegaly             : 96
-Lung Opacity             : 236
-Lung Lesion              : 14
-Edema                    : 101
-Consolidation            : 54
-Pneumonia                : 17
-Atelectasis              : 122
-Pneumothorax             : 34
-Pleural Effusion         : 167
-Pleural Other            : 4
-Fracture                 : 16
-Support Devices          : 233
-age_0_29                 : 41
-age_30_44                : 54
-age_45_59                : 124
-age_60_74                : 143
-age_75_plus              : 124
+No Finding                : 62
+Enlarged Cardiomediastinum: 123
+Cardiomegaly              : 96
+Lung Opacity              : 239
+Lung Lesion               : 12
+Edema                     : 101
+Consolidation             : 50
+Pneumonia                 : 14
+Atelectasis               : 120
+Pneumothorax              : 33
+Pleural Effusion          : 168
+Pleural Other             : 6
+Fracture                  : 11
+Support Devices           : 235
+sex_male                  : 269
+sex_female                : 207
+age_0_29                  : 37
+age_30_44                 : 52
+age_45_59                 : 127
+age_60_74                 : 142
+age_75_plus               : 118
 
 Test label counts
-No Finding               : 47
-Enlarged Cardiomediastinum: 24
-Cardiomegaly             : 65
-Lung Opacity             : 227
-Lung Lesion              : 21
-Edema                    : 110
-Consolidation            : 33
-Pneumonia                : 14
-Atelectasis              : 77
-Pneumothorax             : 45
-Pleural Effusion         : 181
-Pleural Other            : 9
-Fracture                 : 19
-Support Devices          : 246
-age_0_29                 : 35
-age_30_44                : 61
-age_45_59                : 122
-age_60_74                : 148
-age_75_plus              : 114
+No Finding                : 47
+Enlarged Cardiomediastinum: 20
+Cardiomegaly              : 66
+Lung Opacity              : 228
+Lung Lesion               : 19
+Edema                     : 114
+Consolidation             : 32
+Pneumonia                 : 9
+Atelectasis               : 75
+Pneumothorax              : 44
+Pleural Effusion          : 197
+Pleural Other             : 18
+Fracture                  : 24
+Support Devices           : 246
+sex_male                  : 278
+sex_female                : 212
+age_0_29                  : 38
+age_30_44                 : 61
+age_45_59                 : 126
+age_60_74                 : 143
+age_75_plus               : 123
 
 Stratified train / val / test CSVs saved
-Train: 222682 samples
-Val:   486 samples
-Test:  480 samples
+Train: 222681 samples
+Valid:   476 samples
+Test :  491 samples
 """
