@@ -1,0 +1,11 @@
+torch
+torchvision
+torchaudio
+transformers
+timm
+pandas
+scikit-learn
+pyyaml
+pillow
+tqdm
+transformers

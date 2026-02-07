@@ -1,0 +1,5 @@
+model:
+  name: hf_swin_tiny
+  pretrained: true
+  hf_name: microsoft/swin-tiny-patch4-window7-224
+

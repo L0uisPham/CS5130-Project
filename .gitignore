@@ -222,3 +222,4 @@ CheXpert-v1.0-small/
 *.pth
 models/*
 !models/.gitkeep
+runs/

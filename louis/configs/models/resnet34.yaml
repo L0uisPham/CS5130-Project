@@ -1,0 +1,5 @@
+model:
+  name: hf_resnet34
+  pretrained: true
+  hf_name: microsoft/resnet-34
+

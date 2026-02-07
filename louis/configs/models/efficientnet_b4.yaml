@@ -1,0 +1,5 @@
+model:
+  name: hf_efficientnet_b4
+  pretrained: true
+  hf_name: google/efficientnet-b4
+
