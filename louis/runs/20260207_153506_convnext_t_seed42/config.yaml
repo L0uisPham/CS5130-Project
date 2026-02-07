@@ -8,28 +8,30 @@ data:
   pin_memory: true
   image_size: 224
   resize: 256
-
 training:
   epochs: 10
   lr_head: 3e-4
   lr_full: 1e-5
   weight_decay: 1e-4
-
 freeze_schedule:
   warmup_epochs: 3
-
 labels:
-  - No Finding
-  - Enlarged Cardiomediastinum
-  - Cardiomegaly
-  - Lung Opacity
-  - Lung Lesion
-  - Edema
-  - Consolidation
-  - Pneumonia
-  - Atelectasis
-  - Pneumothorax
-  - Pleural Effusion
-  - Pleural Other
-  - Fracture
-  - Support Devices
+- No Finding
+- Enlarged Cardiomediastinum
+- Cardiomegaly
+- Lung Opacity
+- Lung Lesion
+- Edema
+- Consolidation
+- Pneumonia
+- Atelectasis
+- Pneumothorax
+- Pleural Effusion
+- Pleural Other
+- Fracture
+- Support Devices
+model:
+  name: convnext_t
+  pretrained: true
+  timm_name: convnext_tiny
+num_classes: 14

@@ -9,7 +9,7 @@ import yaml
 
 from src.core.io import make_run_dir, save_config
 from src.core.seed import set_seed
-from src.data.loaders import build_dataloaders
+from src.datasets.loaders import build_dataloaders
 from src.models.registry import build_model
 from src.training.trainer import fit
 
