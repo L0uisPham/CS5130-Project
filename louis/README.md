@@ -7,3 +7,8 @@ python -m src.experiments.run_train --config configs/chexpert.yaml --model effic
 python -m src.experiments.run_train --config configs/chexpert.yaml --model deit_small --seed 42 --batch_size 32
 python -m src.experiments.run_train --config configs/chexpert.yaml --model swin_tiny --seed 42 --batch_size 32
 python -m src.experiments.run_train --config configs/chexpert.yaml --model convnext_t --seed 42 --batch_size 32
+
+
+#Running from scratch, ignore the unfinished run
+python -m src.experiments.run_train --config configs/chexpert.yaml --model convnext_t --seed 42 --from_scratch
+

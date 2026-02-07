@@ -80,6 +80,7 @@ def fit(
     cfg,
     run_dir,
     device,
+    from_scratch: bool = False,
 ) -> None:
     label_names = cfg["labels"]
     training_cfg = cfg.get("training", {})
@@ -93,8 +94,31 @@ def fit(
     best_val = -float("inf")
     current_stage = None
     optimizer = None
+    start_epoch = 0
+    checkpoint = None
 
-    for epoch in range(epochs):
+    last_ckpt = run_dir / "checkpoints" / "last.pt"
+    if (not from_scratch) and last_ckpt.exists():
+        checkpoint = torch.load(last_ckpt, map_location=device)
+        model.load_state_dict(checkpoint.get("model_state", checkpoint))
+        last_epoch = int(checkpoint.get("epoch", -1))
+        start_epoch = last_epoch + 1
+        best_val = float(checkpoint.get("best_val", best_val))
+        current_stage = checkpoint.get("stage")
+        stage = get_stage_for_epoch(start_epoch, schedule_cfg)
+        apply_freeze(model, stage)
+        lr = lr_head if stage == "head_only" else lr_full
+        optimizer = torch.optim.AdamW(
+            model.parameters_for_optim(), lr=lr, weight_decay=weight_decay
+        )
+        if "optimizer_state" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
+        current_stage = stage
+
+        if start_epoch >= epochs:
+            return
+
+    for epoch in range(start_epoch, epochs):
         stage = get_stage_for_epoch(epoch, schedule_cfg)
         if stage != current_stage:
             apply_freeze(model, stage)
@@ -115,11 +139,34 @@ def fit(
             best_val = mean_label_auc
             torch.save(model.state_dict(), run_dir / "checkpoints" / "best.pt")
 
-    torch.save(model.state_dict(), run_dir / "checkpoints" / "last.pt")
+        torch.save(
+            {
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "epoch": epoch,
+                "best_val": best_val,
+                "stage": current_stage,
+                "total_epochs": epochs,
+            },
+            last_ckpt,
+        )
 
-    test_metrics = evaluate_auc(model, loaders["test"], device, label_names, epochs, epochs)
-    test_rows = _metrics_to_rows(test_metrics, split="test")
-    append_auc_rows(run_dir, epochs, test_rows)
+    torch.save(
+        {
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict() if optimizer else None,
+            "epoch": epochs - 1,
+            "best_val": best_val,
+            "stage": current_stage,
+            "total_epochs": epochs,
+        },
+        last_ckpt,
+    )
+
+    if start_epoch < epochs:
+        test_metrics = evaluate_auc(model, loaders["test"], device, label_names, epochs, epochs)
+        test_rows = _metrics_to_rows(test_metrics, split="test")
+        append_auc_rows(run_dir, epochs, test_rows)
 
 
 def _metrics_to_rows(metrics: Dict[str, Dict[str, float]], split: str) -> List[Dict]:

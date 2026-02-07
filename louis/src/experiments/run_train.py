@@ -35,6 +35,7 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--from_scratch", action="store_true")
     args = parser.parse_args()
 
     base_cfg = load_yaml(Path(args.config))
@@ -57,7 +58,7 @@ def main() -> None:
     loaders = build_dataloaders(merged_cfg)
     model = build_model(merged_cfg).to(device)
 
-    fit(model, loaders, merged_cfg, run_dir, device)
+    fit(model, loaders, merged_cfg, run_dir, device, from_scratch=args.from_scratch)
 
 
 if __name__ == "__main__":
