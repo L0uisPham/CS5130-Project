@@ -16,6 +16,7 @@ class HfImageClassifierAdapter(BaseModelAdapter):
             model_name,
             num_labels=num_classes,
             ignore_mismatched_sizes=True,
+            use_safetensors=True,
         )
 
     def forward(self, batch: Batch) -> ModelOutput:
@@ -37,4 +38,3 @@ class HfImageClassifierAdapter(BaseModelAdapter):
                 param.requires_grad = True
         else:
             raise ValueError(f"Unknown freeze stage: {stage}")
-
