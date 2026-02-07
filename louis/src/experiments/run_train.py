@@ -34,6 +34,7 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--batch_size", type=int, default=None)
     args = parser.parse_args()
 
     base_cfg = load_yaml(Path(args.config))
@@ -44,6 +45,9 @@ def main() -> None:
     merged_cfg = merge_dicts(base_cfg, model_cfg)
     merged_cfg["model"]["name"] = model_name
     merged_cfg["num_classes"] = len(merged_cfg["labels"])
+    if args.batch_size is not None:
+        merged_cfg.setdefault("data", {})
+        merged_cfg["data"]["batch_size"] = args.batch_size
 
     run_dir = make_run_dir(model_name=model_name, seed=args.seed)
     save_config(run_dir, merged_cfg)
