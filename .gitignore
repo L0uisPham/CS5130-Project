@@ -221,3 +221,4 @@ CheXpert-v1.0-small/
 *.zip
 models/*
 !models/.gitkeep
+runs/
