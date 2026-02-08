@@ -219,6 +219,7 @@ __marimo__/
 data/
 CheXpert-v1.0-small/
 *.zip
+*.pth
 models/*
 !models/.gitkeep
 runs/
