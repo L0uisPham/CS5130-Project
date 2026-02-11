@@ -5,6 +5,7 @@ transformers
 timm
 pandas
 scikit-learn
+scikit-multilearn
 pyyaml
 pillow
 tqdm

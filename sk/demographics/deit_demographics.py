@@ -18,14 +18,16 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -------------------------------------------------
 # Data transforms
 # -------------------------------------------------
-val_transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(
-        [0.485, 0.456, 0.406],
-        [0.229, 0.224, 0.225],
-    ),
-])
+val_transform = transforms.Compose(
+    [
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            [0.485, 0.456, 0.406],
+            [0.229, 0.224, 0.225],
+        ),
+    ]
+)
 
 # -------------------------------------------------
 # Dataset / Loader
@@ -58,6 +60,7 @@ model.load_state_dict(
 
 model.eval()
 model.freeze_backbone_probing()
+
 
 # -------------------------------------------------
 # Feature extraction
@@ -100,6 +103,7 @@ X_tr, X_va, y_sex_tr, y_sex_va, y_age_tr, y_age_va = train_test_split(
     stratify=y_sex,
 )
 
+
 # -------------------------------------------------
 # Bootstrap confidence intervals
 # -------------------------------------------------
@@ -117,6 +121,7 @@ def bootstrap_ci(metric_fn, y_true, y_pred, n_boot=1000, alpha=0.95):
 
     return np.mean(scores), lo, hi
 
+
 # -------------------------------------------------
 # Sex probe (classification)
 # -------------------------------------------------
@@ -129,9 +134,7 @@ y_va_pred = sex_clf.predict(X_va)
 sex_auc = roc_auc_score(y_sex_va, y_va_prob)
 sex_acc = accuracy_score(y_sex_va, y_va_pred)
 
-mean_auc, lo_auc, hi_auc = bootstrap_ci(
-    roc_auc_score, y_sex_va, y_va_prob
-)
+mean_auc, lo_auc, hi_auc = bootstrap_ci(roc_auc_score, y_sex_va, y_va_prob)
 
 print(
     f"Sex probe - "
@@ -165,15 +168,9 @@ with torch.no_grad():
 
 mae = mean_absolute_error(y_age_va, y_va_pred)
 
-mean_mae, lo_mae, hi_mae = bootstrap_ci(
-    mean_absolute_error, y_age_va, y_va_pred
-)
+mean_mae, lo_mae, hi_mae = bootstrap_ci(mean_absolute_error, y_age_va, y_va_pred)
 
-print(
-    f"Age probe - "
-    f"MAE: {mae:.4f} "
-    f"[{lo_mae:.4f}, {hi_mae:.4f}]"
-)
+print(f"Age probe - MAE: {mae:.4f} [{lo_mae:.4f}, {hi_mae:.4f}]")
 
 """
 OUTPUT
@@ -181,3 +178,4 @@ OUTPUT
 Sex probe - AUC: 0.5652 [0.3939, 0.7366], Accuracy: 0.7746
 Age probe - MAE: 0.2821 [0.2250, 0.3451]
 """
+

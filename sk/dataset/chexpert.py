@@ -9,6 +9,7 @@ from torchvision import transforms
 
 class CheXpert(Dataset):
     LABELS = [
+<<<<<<< Updated upstream
         "No Finding",
         "Enlarged Cardiomediastinum",
         "Cardiomegaly",
@@ -30,6 +31,21 @@ class CheXpert(Dataset):
         "age_45_59",
         "age_60_74",
         "age_75_plus"
+=======
+        "Atelectasis",
+        "Cardiomegaly",
+        "Consolidation",
+        "Edema",
+        "Enlarged Cardiomediastinum",
+        "Fracture",
+        "Lung Lesion",
+        "Lung Opacity",
+        "Pleural Effusion",
+        "Pleural Other",
+        "Pneumonia",
+        "Pneumothorax",
+        "Support Devices",
+>>>>>>> Stashed changes
     ]
 
     ROOT_DIR = "data"
@@ -86,9 +102,22 @@ class CheXpert(Dataset):
     def __getitem__(self, idx):
         img_path = os.path.join(self.ROOT_DIR, self.df.iloc[idx]["Path"])
         image = Image.open(img_path).convert("RGB")
+<<<<<<< Updated upstream
         label = torch.tensor(
             self.df.loc[idx, self.LABELS].values, dtype=torch.float32)
         image = self.transform(image)
+=======
+
+        label = torch.from_numpy(
+            self.df.loc[self.df.index[idx], self.LABELS].to_numpy(
+                dtype="float32", copy=True
+            )
+        )
+
+        if self.transform:
+            image = self.transform(image)
+
+>>>>>>> Stashed changes
         return image, label
 
     @property

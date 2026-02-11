@@ -17,6 +17,7 @@ from src.datasets.demographics import (
     normalize_demographics,
 )
 from src.datasets.transforms import build_transforms
+from src.datasets.splitters import ProcessSplit
 
 
 def _prepare_dataframe(csv_path: Path) -> pd.DataFrame:
@@ -59,6 +60,17 @@ def build_dataloaders(cfg) -> Dict[str, DataLoader]:
     val_csv = root / data_cfg["val_csv"]
     test_csv = root / data_cfg["test_csv"]
     root_dir = root / data_cfg.get("root_dir", "data")
+
+    if bool(data_cfg.get("generate_stratified_splits", False)):
+        splitter = ProcessSplit(
+            train_csv=train_csv,
+            valid_csv=val_csv,
+            output_dir=data_cfg.get("split_output_dir", root / "data/processed_chexpert"),
+        )
+        splitter.run()
+        train_csv = Path(data_cfg.get("split_output_dir", root / "data/processed_chexpert")) / "train_strat.csv"
+        val_csv = Path(data_cfg.get("split_output_dir", root / "data/processed_chexpert")) / "valid_strat.csv"
+        test_csv = Path(data_cfg.get("split_output_dir", root / "data/processed_chexpert")) / "test_strat.csv"
 
     label_names = cfg.get("labels", [])
     if not label_names:
