@@ -34,7 +34,7 @@ class ProcessSplit:
         "age_75_plus",
     ]
 
-    def __init__(self, train_csv="data/CheXpert-v1.0-small/train.csv", valid_csv="data/CheXpert-v1.0-small/valid.csv", output_dir="data/processed"):
+    def __init__(self, train_csv="data/CheXpert-v1.0-small/train.csv", valid_csv="data/CheXpert-v1.0-small/valid.csv", output_dir="data/processed_chexpert_age_gender_split"):
         self.train_csv = Path(train_csv)
         self.valid_csv = Path(valid_csv)
         self.output_dir = Path(output_dir)
@@ -126,9 +126,9 @@ class ProcessSplit:
             axis=1,
         )
 
-        train_strat.to_csv(self.output_dir / "train_strat.csv", index=False)
-        valid_strat.to_csv(self.output_dir / "valid_strat.csv", index=False)
-        test_strat.to_csv(self.output_dir / "test_strat.csv", index=False)
+        train_strat.to_csv(self.output_dir / "train.csv", index=False)
+        valid_strat.to_csv(self.output_dir / "val.csv", index=False)
+        test_strat.to_csv(self.output_dir / "test.csv", index=False)
 
 if __name__ == "__main__":
     ps = ProcessSplit()
