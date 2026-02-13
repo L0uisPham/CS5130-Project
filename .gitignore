@@ -223,3 +223,4 @@ CheXpert-v1.0-small/
 models/*
 !models/.gitkeep
 runs/
+.DS_Store
