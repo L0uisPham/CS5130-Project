@@ -67,10 +67,12 @@ def build_dataloaders(cfg) -> Dict[str, DataLoader]:
             valid_csv=val_csv,
             output_dir=data_cfg.get("split_output_dir", root / "data/processed_chexpert"),
         )
-        splitter.run()
-        train_csv = Path(data_cfg.get("split_output_dir", root / "data/processed_chexpert")) / "train_strat.csv"
-        val_csv = Path(data_cfg.get("split_output_dir", root / "data/processed_chexpert")) / "valid_strat.csv"
-        test_csv = Path(data_cfg.get("split_output_dir", root / "data/processed_chexpert")) / "test_strat.csv"
+        split_dir = Path(data_cfg.get("split_output_dir", root / "data/processed_chexpert"))
+        train_csv = split_dir / "train.csv"
+        val_csv = split_dir / "val.csv"
+        test_csv = split_dir / "test.csv"
+        if not (train_csv.exists() and val_csv.exists() and test_csv.exists()):
+            splitter.run()
 
     label_names = cfg.get("labels", [])
     if not label_names:

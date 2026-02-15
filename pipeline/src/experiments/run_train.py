@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import copy
+from itertools import product
 from pathlib import Path
 from typing import Dict
 
@@ -58,15 +60,54 @@ def main() -> None:
         merged_cfg.setdefault("data", {})
         merged_cfg["data"]["prefetch_factor"] = args.prefetch_factor
 
-    run_dir = make_run_dir(model_name=model_name, seed=args.seed)
-    save_config(run_dir, merged_cfg)
+    merged_cfg["seed"] = args.seed
 
-    set_seed(args.seed)
+    training_cfg = merged_cfg.get("training", {})
+    lr_head_values = training_cfg.get("lr_head", training_cfg.get("lr", 3e-4))
+    lr_full_values = training_cfg.get("lr_full", training_cfg.get("lr_finetune", 1e-5))
+    weight_decay_values = training_cfg.get("weight_decay", 1e-4)
+
+    def _as_list(value):
+        if isinstance(value, (list, tuple)):
+            return list(value), True
+        return [value], False
+
+    lr_head_values, lr_head_is_list = _as_list(lr_head_values)
+    lr_full_values, lr_full_is_list = _as_list(lr_full_values)
+    weight_decay_values, weight_decay_is_list = _as_list(weight_decay_values)
+
+    is_grid = lr_head_is_list or lr_full_is_list or weight_decay_is_list
+    grid_epochs = int(training_cfg.get("grid_epochs", 10))
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    loaders = build_dataloaders(merged_cfg)
-    model = build_model(merged_cfg).to(device)
 
-    fit(model, loaders, merged_cfg, run_dir, device, from_scratch=args.from_scratch)
+    def _fmt(value) -> str:
+        if isinstance(value, float):
+            return f"{value:g}"
+        return str(value)
+
+    for lr_head, lr_full, weight_decay in product(
+        lr_head_values, lr_full_values, weight_decay_values
+    ):
+        run_cfg = copy.deepcopy(merged_cfg)
+        run_cfg.setdefault("training", {})
+        run_cfg["training"]["lr_head"] = float(lr_head)
+        run_cfg["training"]["lr_full"] = float(lr_full)
+        run_cfg["training"]["weight_decay"] = float(weight_decay)
+        if is_grid:
+            run_cfg["training"]["epochs"] = grid_epochs
+
+        run_name = (
+            f"lrh{_fmt(lr_head)}_lrf{_fmt(lr_full)}_wd{_fmt(weight_decay)}_seed{args.seed}"
+        )
+        run_dir = make_run_dir(run_name=run_name, include_timestamp=True)
+        run_cfg["run_id"] = run_dir.name
+        save_config(run_dir, run_cfg)
+
+        set_seed(args.seed)
+        loaders = build_dataloaders(run_cfg)
+        model = build_model(run_cfg).to(device)
+        fit(model, loaders, run_cfg, run_dir, device, from_scratch=args.from_scratch)
 
 
 if __name__ == "__main__":
