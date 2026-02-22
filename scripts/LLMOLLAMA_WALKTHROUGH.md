@@ -143,3 +143,28 @@ When you run `python scripts/LLMollama.py`:
 ```
 
 To test with an example x-ray (no real image file needed for LLM step), use the script in `scripts/run_llmollama_example.py` and the generated `example_xray_input.json`.
+
+---
+
+## Connecting repo models to LLMollama
+
+Use **`scripts/connect_models_to_llmollama.py`** to run your trained models on an image and feed their outputs into LLMollama in one step.
+
+- **models/ray.py** (ResNet34, EfficientNet-B4): `--backend ray --model resnet34` or `--model effb4`. Requires trained weights in `models/` (e.g. `resnet34_chexpert.pt`).
+- **sk/inference** (deit, swin, resnet, vgg, efficient): `--backend sk --model resnet` (or deit, swin, vgg, efficient). Uses weights in `sk/tuned_models/`.
+
+Example:
+
+```bash
+python scripts/connect_models_to_llmollama.py --image path/to/xray.png --backend ray --model resnet34 --output report.txt --explanation-out explanation.json
+```
+
+From code:
+
+```python
+from scripts.connect_models_to_llmollama import run_model_then_llm
+out = run_model_then_llm("path/to/xray.png", backend="ray", model_name="resnet34")
+print(out["report"])       # personalized prose
+print(out["explanation"])  # structured JSON
+print(out["labels"], out["probs"])  # model outputs
+```

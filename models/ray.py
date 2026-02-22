@@ -156,6 +156,58 @@ def build_effb4(num_labels=14):
     return m
 
 
+# Eval transform for single-image inference (same as make_loaders)
+EVAL_TRANSFORM = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
+
+def predict_single_image(
+    image_path,
+    model_name: str = "resnet34",
+    weights_dir=None,
+    device=None,
+) -> tuple:
+    """
+    Run a trained CheXpert model on one image. Returns (labels, probs) for LLMollama or pipelines.
+
+    model_name: "resnet34" or "effb4" / "efficientnet_b4"
+    weights_dir: directory containing resnet34_chexpert.pt and/or effb4_chexpert.pt (default: models/)
+    Returns: (CHEXPERT_LABELS_14, list of 14 floats)
+    """
+    weights_dir = Path(weights_dir or "models")
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    name = model_name.strip().lower()
+    if name == "efficientnet_b4":
+        name = "effb4"
+
+    if name == "resnet34":
+        model = build_resnet34(num_labels=len(CHEXPERT_LABELS_14))
+        ckpt = weights_dir / "resnet34_chexpert.pt"
+    elif name == "effb4":
+        model = build_effb4(num_labels=len(CHEXPERT_LABELS_14))
+        ckpt = weights_dir / "effb4_chexpert.pt"
+    else:
+        raise ValueError(f"model_name must be 'resnet34' or 'effb4'. Got: {model_name}")
+
+    if not ckpt.exists():
+        raise FileNotFoundError(f"Model weights not found: {ckpt} (train with models/ray.py first)")
+
+    model.load_state_dict(torch.load(ckpt, map_location=device))
+    model.to(device)
+    model.eval()
+
+    img = Image.open(image_path).convert("RGB")
+    x = EVAL_TRANSFORM(img).unsqueeze(0).to(device)
+    with torch.no_grad():
+        logits = model(x)
+        probs = torch.sigmoid(logits).squeeze(0).cpu().tolist()
+
+    return list(CHEXPERT_LABELS_14), probs
+
+
 @torch.no_grad()
 def evaluate(model, loader, device):
     model.eval()

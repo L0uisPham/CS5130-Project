@@ -1,8 +1,20 @@
 import random
 from pathlib import Path
+from typing import List, Tuple
+
 import torch
 from timm import create_model
+from PIL import Image
+from torchvision import transforms
+
 from sk.dataset.chexpert import CheXpert
+
+# Same eval transform as CheXpert test set (Resize 224, ToTensor, ImageNet normalize)
+EVAL_TRANSFORM = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
 
 
 class Inference:
@@ -66,6 +78,26 @@ class Inference:
             print(f"  {label_name}: {int(gt)}")
 
         # TODO image not from dataset capability, manual image selection via path
+
+    def inference_from_path(self, image_path: str) -> Tuple[List[str], List[float]]:
+        """
+        Run model on a single image file. Returns (label_names, probabilities) for use
+        with LLMollama or other pipelines. Uses first 14 labels to match CheXpert 14-condition outputs.
+        """
+        path = Path(image_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+        image = Image.open(path).convert("RGB")
+        image = EVAL_TRANSFORM(image).unsqueeze(0).to(self.device)
+
+        with torch.no_grad():
+            logits = self.model(image)
+            probs = torch.sigmoid(logits).squeeze(0).cpu()
+
+        labels = list(self.test_dataset.LABELS)
+        # Use first 14 for CheXpert 14-condition compatibility (e.g. LLMollama)
+        n = min(14, len(labels), probs.numel())
+        return labels[:n], probs[:n].tolist()
 
 
 """
