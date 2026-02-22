@@ -1,0 +1,37 @@
+{
+  "summary": "The chest X-ray suggests the presence of cardiomegaly and pleural effusion.",
+  "ranked_findings": [
+    {
+      "label": "Cardiomegaly",
+      "status": "Present",
+      "prob": 0.88,
+      "rationale": "High probability due to significant enlargement."
+    },
+    {
+      "label": "Pleural Effusion",
+      "status": "Present",
+      "prob": 0.79,
+      "rationale": "Moderate to high probability based on observed pleural abnormalities."
+    }
+  ],
+  "differential": [
+    {
+      "condition": "Possible pneumonia",
+      "confidence": "medium",
+      "why": "Lung Opacity and Consolidation probabilities are moderate."
+    },
+    {
+      "condition": "Atelectasis or Edema",
+      "confidence": "low",
+      "why": "Low probabilities for Atelectasis and Edema, but cannot be ruled out entirely."
+    }
+  ],
+  "recommended_actions": [
+    {
+      "action": "Consider clinical correlation and prior imaging comparison",
+      "urgency": "routine",
+      "note": "For further evaluation and confirmation of findings."
+    }
+  ],
+  "safety_note": "Research/education use only; not medical advice or a definitive diagnosis."
+}

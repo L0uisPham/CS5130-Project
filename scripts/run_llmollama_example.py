@@ -7,14 +7,20 @@ This script:
 2. Runs LLMollama in two modes: --mode explain (JSON) and --mode personalize (prose).
 3. Optionally uses an image path as image_id if you have a real x-ray file.
 
-Prerequisites:
-- Ollama installed and running (e.g. ollama run llama3.1:8b).
-- From project root: python scripts/run_llmollama_example.py
+Prerequisites for real LLM output:
+- Ollama installed and running (e.g. ollama serve, then ollama run llama3.1:8b).
+
+To test WITHOUT Ollama (mock output):
+- Run:  python scripts/run_llmollama_example.py --dry-run
+- Or:   set LLMOLLAMA_DRY_RUN=1  then  python scripts/run_llmollama_example.py
+
+From project root: python scripts/run_llmollama_example.py [--dry-run]
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -60,6 +66,10 @@ def make_example_probs() -> list[float]:
 
 
 def main() -> None:
+    if "--dry-run" in sys.argv:
+        os.environ["LLMOLLAMA_DRY_RUN"] = "1"
+        sys.argv.remove("--dry-run")
+
     script_dir = Path(__file__).resolve().parent
     project_root = script_dir.parent
     example_json = script_dir / "example_xray_input.json"
@@ -79,7 +89,8 @@ def main() -> None:
     # 2) Run LLMollama: explain mode (structured JSON)
     llmollama = project_root / "scripts" / "LLMollama.py"
     explain_out = script_dir / "example_explanation.json"
-    print("--- Step 1: Explain (structured JSON) ---")
+    dry_run = os.environ.get("LLMOLLAMA_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
+    print("--- Step 1: Explain (structured JSON)" + (" [DRY RUN - no Ollama]" if dry_run else "") + " ---")
     cmd_explain = [
         sys.executable,
         str(llmollama),
@@ -87,16 +98,19 @@ def main() -> None:
         "--mode", "explain",
         "--output", str(explain_out),
     ]
+    if dry_run:
+        cmd_explain.append("--dry-run")
     r1 = subprocess.run(cmd_explain, cwd=str(project_root))
     if r1.returncode != 0:
-        print("Explain step failed. Is Ollama running? Try: ollama run llama3.1:8b")
+        print("Explain step failed. Is Ollama running? Try: ollama serve then ollama run llama3.1:8b")
+        print("Or run without Ollama: python scripts/run_llmollama_example.py --dry-run")
         sys.exit(r1.returncode)
     print(f"Saved explanation to {explain_out}")
     print()
 
     # 3) Run LLMollama: personalize mode (prose report for this x-ray)
     report_out = script_dir / "example_personalized_report.txt"
-    print("--- Step 2: Personalized report (prose for this x-ray) ---")
+    print("--- Step 2: Personalized report (prose for this x-ray)" + (" [DRY RUN - no Ollama]" if dry_run else "") + " ---")
     cmd_personalize = [
         sys.executable,
         str(llmollama),
@@ -105,6 +119,8 @@ def main() -> None:
         "--output", str(report_out),
         "--image_id", example_image_id,
     ]
+    if dry_run:
+        cmd_personalize.append("--dry-run")
     r2 = subprocess.run(cmd_personalize, cwd=str(project_root))
     if r2.returncode != 0:
         print("Personalize step failed.")

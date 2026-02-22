@@ -24,11 +24,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Dict, List, Any, Tuple, Optional, Union
 
 import requests
+
+
+def _get_dry_run() -> bool:
+    """True if LLMOLLAMA_DRY_RUN=1 (or true/yes) to skip Ollama and use mock outputs."""
+    return os.environ.get("LLMOLLAMA_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
 
 
 # -----------------------------
@@ -124,6 +130,44 @@ Return JSON only.
 # -----------------------------
 # 3) Ollama call
 # -----------------------------
+def _call_ollama_generate_api(
+    url: str,
+    payload: dict,
+    timeout_s: int,
+) -> str:
+    """POST to Ollama; returns response text. Raises on connection error or non-404 HTTP error."""
+    r = requests.post(url, json=payload, timeout=timeout_s)
+    r.raise_for_status()
+    data = r.json()
+    return data.get("response", "")
+
+
+def _call_ollama_chat_api(
+    host: str,
+    model: str,
+    prompt: str,
+    temperature: float,
+    top_p: float,
+    timeout_s: int,
+) -> str:
+    """Use /api/chat (messages format). Returns message content."""
+    url = f"{host}/api/chat"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "top_p": top_p,
+        },
+    }
+    r = requests.post(url, json=payload, timeout=timeout_s)
+    r.raise_for_status()
+    data = r.json()
+    msg = data.get("message") or {}
+    return msg.get("content", "")
+
+
 def call_ollama_generate(
     prompt: str,
     model: str = "llama3.1:8b",
@@ -133,7 +177,9 @@ def call_ollama_generate(
     timeout_s: int = 120,
 ) -> str:
     """
-    Calls Ollama /api/generate and returns the raw text response (should be JSON string).
+    Calls Ollama and returns the raw text response.
+    Tries POST /api/generate first; if 404, falls back to POST /api/chat (some Windows setups).
+    Raises with a clear message if Ollama is not running or both endpoints fail.
     """
     url = f"{host}/api/generate"
     payload = {
@@ -145,10 +191,88 @@ def call_ollama_generate(
             "top_p": top_p,
         },
     }
-    r = requests.post(url, json=payload, timeout=timeout_s)
-    r.raise_for_status()
-    data = r.json()
-    return data.get("response", "")
+    try:
+        return _call_ollama_generate_api(url, payload, timeout_s)
+    except requests.exceptions.ConnectionError as e:
+        raise RuntimeError(
+            "Could not connect to Ollama. Is it running? Start it with:\n  ollama serve\n"
+            "Then in another terminal pull and run a model:\n  ollama run llama3.1:8b\n"
+            f"Host used: {host}"
+        ) from e
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            # Fallback: some Windows/Ollama setups only expose /api/chat
+            try:
+                return _call_ollama_chat_api(host, model, prompt, temperature, top_p, timeout_s)
+            except requests.exceptions.HTTPError:
+                raise RuntimeError(
+                    f"Ollama returned 404 at {url}. Tried /api/chat as fallback and it also failed.\n"
+                    "  1) Ensure Ollama is running (ollama serve or open Ollama app).\n"
+                    f"  2) Pull the model: ollama run {model}\n"
+                    "  3) To test without Ollama: set LLMOLLAMA_DRY_RUN=1 (Windows) or export LLMOLLAMA_DRY_RUN=1 (Mac/Linux)"
+                ) from e
+        raise
+    # Unreachable but satisfy return type
+    return ""
+
+
+# -----------------------------
+# 3b) Dry-run: mock explanation without Ollama
+# -----------------------------
+def build_mock_explanation(
+    label_table: List[Dict[str, Any]],
+    allowed_labels: List[str],
+) -> Dict[str, Any]:
+    """
+    Build a valid explanation dict from the label table only (no LLM).
+    Used when LLMOLLAMA_DRY_RUN=1 so the pipeline can be tested without Ollama.
+    """
+    present = [r for r in label_table if r["status"] == "Present"]
+    uncertain = [r for r in label_table if r["status"] == "Uncertain"]
+    if present:
+        top = present[:3]
+        summary = "Model outputs suggest possible findings: " + ", ".join(
+            f"{r['label']} ({r['status']})" for r in top
+        ) + ". For research/education only."
+    else:
+        summary = "Model outputs show no findings above the present threshold. For research/education only."
+    ranked_findings = [
+        {
+            "label": r["label"],
+            "status": r["status"],
+            "prob": r["prob"],
+            "rationale": f"Probability {r['prob']:.2f} maps to {r['status']}.",
+        }
+        for r in label_table
+        if r["label"] in allowed_labels
+    ][:10]
+    differential = [
+        {"condition": "Clinical correlation recommended", "confidence": "low", "why": "Based on model outputs."},
+        {"condition": "Consider prior imaging comparison", "confidence": "low", "why": "Routine follow-up."},
+    ]
+    recommended_actions = [
+        {"action": "Correlate with clinical history and prior studies", "urgency": "routine", "note": "Non-prescriptive."},
+    ]
+    safety_note = "Research/education use only; not medical advice or a definitive diagnosis."
+    return {
+        "summary": summary,
+        "ranked_findings": ranked_findings,
+        "differential": differential,
+        "recommended_actions": recommended_actions,
+        "safety_note": safety_note,
+    }
+
+
+def build_mock_personalized_report(explanation: Dict[str, Any], image_id: Optional[str]) -> str:
+    """Prose report template when LLMOLLAMA_DRY_RUN=1 (no Ollama call)."""
+    image_line = f" (Study/image: {image_id})" if image_id else ""
+    return (
+        f"This interpretation is based on model outputs for this specific study{image_line}.\n\n"
+        f"{explanation.get('summary', '')}\n\n"
+        "Key findings from the model are listed in the structured explanation. "
+        "Differential considerations and suggested next steps should be discussed with a qualified provider. "
+        "This is for research and education only; it is not medical advice or a definitive diagnosis."
+    )
 
 
 # -----------------------------
@@ -324,6 +448,9 @@ def write_personalized_report(
             raise ValueError("Provide either explanation dict or both labels and probs.")
         explanation = explain_chexpert_outputs(labels, probs, model=model, host=host)
 
+    if _get_dry_run():
+        return build_mock_personalized_report(explanation, image_id)
+
     prompt = build_personalized_report_prompt(explanation, image_id=image_id)
     raw = call_ollama_generate(prompt, model=model, host=host, temperature=temperature, timeout_s=timeout_s)
     return raw.strip()
@@ -415,10 +542,14 @@ def explain_chexpert_outputs(
     End-to-end: label probs -> prompt -> Ollama -> validated JSON dict.
 
     Raises RuntimeError if it can't produce valid output after retries.
+    If LLMOLLAMA_DRY_RUN=1, returns a mock explanation without calling Ollama.
     """
     label_table = build_label_table(labels, probs, present_thr, uncertain_thr)
-    prompt = build_prompt(label_table, allowed_labels=labels)
 
+    if _get_dry_run():
+        return build_mock_explanation(label_table, allowed_labels=labels)
+
+    prompt = build_prompt(label_table, allowed_labels=labels)
     raw = call_ollama_generate(prompt, model=model, host=host)
     candidate = extract_json_candidate(raw)
 
@@ -478,7 +609,15 @@ if __name__ == "__main__":
     )
     parser.add_argument("--model", type=str, default="llama3.1:8b", help="Ollama model name.")
     parser.add_argument("--host", type=str, default="http://localhost:11434", help="Ollama API host.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Skip Ollama; use mock explanation and report (set LLMOLLAMA_DRY_RUN=1).",
+    )
     args = parser.parse_args()
+
+    if args.dry_run:
+        os.environ["LLMOLLAMA_DRY_RUN"] = "1"
 
     if args.input:
         loaded = load_inputs_from_file(args.input)
@@ -518,3 +657,4 @@ if __name__ == "__main__":
         print("\nExample: save labels+probs from inference, then run:")
         print('  python scripts/LLMollama.py --input inference_output.json --output report.txt --image_id "path/to/xray.png"')
         print("  python scripts/LLMollama.py --input explanation.json --mode personalize --output report.txt")
+        print("\nWithout Ollama (mock output):  python scripts/LLMollama.py --input scripts/example_xray_input.json --dry-run --output report.txt")
