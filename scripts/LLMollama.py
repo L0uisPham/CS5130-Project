@@ -1,25 +1,32 @@
 """
-chexpert_llm.py
+chexpert_llm.py / LLMollama.py
 
 Local LLM explainer for CheXpert-style 14-label outputs using Ollama.
 
-Inputs:
-- labels: list[str] length 14
+Inputs (from other project files, e.g. inference.py, image_processing.py):
+- labels: list[str] length 14 (CheXpert labels)
 - probs: list[float] length 14 (0..1)
 
-Outputs (dict):
+Outputs (dict from explain_chexpert_outputs):
 - summary
 - ranked_findings
 - differential
 - recommended_actions
 - safety_note
+
+Personalized writing:
+- write_personalized_report() takes the above outputs (or raw labels+probs)
+  plus an optional image identifier and generates a short, individualized
+  narrative for that x-ray image.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
-from typing import Dict, List, Any, Tuple, Optional
+from pathlib import Path
+from typing import Dict, List, Any, Tuple, Optional, Union
 
 import requests
 
@@ -236,7 +243,164 @@ Return corrected JSON only.
 
 
 # -----------------------------
-# 5) Main function you call
+# 5) Personalized writing for an individualized x-ray image
+# -----------------------------
+def build_personalized_report_prompt(
+    explanation: Dict[str, Any],
+    image_id: Optional[str] = None,
+) -> str:
+    """
+    Build a prompt that asks the LLM to write a short, personalized narrative
+    for a single x-ray image based on the structured explanation.
+    """
+    summary = explanation.get("summary", "No summary provided.")
+    ranked = explanation.get("ranked_findings", [])
+    differential = explanation.get("differential", [])
+    actions = explanation.get("recommended_actions", [])
+    safety = explanation.get("safety_note", "")
+
+    lines = [f"Summary: {summary}", "", "Ranked findings:"]
+    for r in ranked[:10]:
+        lines.append(f"  - {r.get('label', '')}: {r.get('status', '')} (prob {r.get('prob', 0):.2f}) — {r.get('rationale', '')}")
+    lines.append("")
+    lines.append("Differential considerations:")
+    for d in differential:
+        lines.append(f"  - {d.get('condition', '')} ({d.get('confidence', '')}): {d.get('why', '')}")
+    lines.append("")
+    lines.append("Recommended actions:")
+    for a in actions:
+        lines.append(f"  - [{a.get('urgency', '')}] {a.get('action', '')} — {a.get('note', '')}")
+    lines.append("")
+    lines.append(f"Safety note: {safety}")
+
+    context = "\n".join(lines)
+    image_line = f"\nThis report is for the following study/image: {image_id}." if image_id else ""
+
+    prompt = f"""
+You are helping produce a short, personalized radiology-style narrative for one chest x-ray study.
+Use ONLY the structured findings below. Do not invent findings. Do not give medication or prescriptions.
+Use cautious language (e.g. "suggests", "consider", "possible"). Do not state a definitive diagnosis.
+
+STRUCTURED FINDINGS FOR THIS IMAGE:
+{context}
+{image_line}
+
+Write 2–4 short paragraphs that:
+1) Open with a sentence that this interpretation is based on model outputs for this specific study.
+2) Summarize the key findings in plain language, ordered by relevance.
+3) Briefly mention differential considerations and suggested next steps.
+4) End with the safety disclaimer (research/education only; not medical advice).
+
+Output ONLY the narrative text. No JSON, no markdown headers, no bullet lists—just prose.
+""".strip()
+    return prompt
+
+
+def write_personalized_report(
+    explanation: Optional[Dict[str, Any]] = None,
+    labels: Optional[List[str]] = None,
+    probs: Optional[List[float]] = None,
+    image_id: Optional[str] = None,
+    model: str = "llama3.1:8b",
+    host: str = "http://localhost:11434",
+    temperature: float = 0.3,
+    timeout_s: int = 120,
+) -> str:
+    """
+    Generate a personalized narrative for an individualized x-ray image.
+
+    Inputs (use one of):
+    - explanation: dict from explain_chexpert_outputs() (summary, ranked_findings, etc.)
+    - labels + probs: raw CheXpert outputs from inference (e.g. from inference.py or image_processing pipeline);
+      will call explain_chexpert_outputs() internally to get the explanation first.
+
+    - image_id: optional identifier for this image (e.g. path, study ID) so the narrative is clearly for "this" image.
+
+    Returns:
+    - Plain-text personalized report string.
+    """
+    if explanation is None:
+        if labels is None or probs is None:
+            raise ValueError("Provide either explanation dict or both labels and probs.")
+        explanation = explain_chexpert_outputs(labels, probs, model=model, host=host)
+
+    prompt = build_personalized_report_prompt(explanation, image_id=image_id)
+    raw = call_ollama_generate(prompt, model=model, host=host, temperature=temperature, timeout_s=timeout_s)
+    return raw.strip()
+
+
+# -----------------------------
+# 6) Load inputs from other files / JSON (pipeline integration)
+# -----------------------------
+def load_inputs_from_file(path: Union[str, Path]) -> Dict[str, Any]:
+    """
+    Load inputs from a JSON file produced by other scripts (e.g. inference or a wrapper).
+
+    Expected JSON shapes (any of):
+    - {"labels": [...], "probs": [...]}  → use with explain_chexpert_outputs or write_personalized_report
+    - {"explanation": {...}, "image_id": "..."}  → use explanation + image_id for personalized report
+    - {"summary": ..., "ranked_findings": ..., ...}  → full explanation dict at top level
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Input file not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    # If it's already a full explanation (has summary + ranked_findings), return as-is for "explanation" key
+    if "summary" in data and "ranked_findings" in data:
+        return {"explanation": data, "image_id": data.get("image_id")}
+
+    if "explanation" in data:
+        return {"explanation": data["explanation"], "image_id": data.get("image_id")}
+
+    if "labels" in data and "probs" in data:
+        return {"labels": data["labels"], "probs": data["probs"], "image_id": data.get("image_id")}
+
+    raise ValueError(
+        "JSON must contain either (labels, probs) or (explanation) or top-level (summary, ranked_findings). "
+        f"Keys found: {list(data.keys())}"
+    )
+
+
+def run_personalized_from_file(
+    input_path: Union[str, Path],
+    output_path: Optional[Union[str, Path]] = None,
+    model: str = "llama3.1:8b",
+    host: str = "http://localhost:11434",
+) -> str:
+    """
+    Load inputs from a JSON file (output of other pipeline files), generate personalized
+    report for the x-ray image, and optionally write it to a file.
+
+    Returns the report string.
+    """
+    loaded = load_inputs_from_file(input_path)
+    image_id = loaded.get("image_id")
+
+    if "explanation" in loaded:
+        report = write_personalized_report(
+            explanation=loaded["explanation"],
+            image_id=image_id,
+            model=model,
+            host=host,
+        )
+    else:
+        report = write_personalized_report(
+            labels=loaded["labels"],
+            probs=loaded["probs"],
+            image_id=image_id,
+            model=model,
+            host=host,
+        )
+
+    if output_path is not None:
+        Path(output_path).write_text(report, encoding="utf-8")
+    return report
+
+
+# -----------------------------
+# 7) Main structured explanation function
 # -----------------------------
 def explain_chexpert_outputs(
     labels: List[str],
@@ -280,3 +444,77 @@ def explain_chexpert_outputs(
         candidate = extract_json_candidate(candidate)
 
     raise RuntimeError("Unreachable: retries loop ended unexpectedly.")
+
+
+# -----------------------------
+# 8) CLI: run from pipeline with outputs from other files
+# -----------------------------
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="LLM explainer and personalized report writer for CheXpert x-ray outputs (Ollama)."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["explain", "personalize"],
+        default="personalize",
+        help="explain: output JSON only. personalize: write personalized narrative for the image (default).",
+    )
+    parser.add_argument(
+        "--input",
+        type=str,
+        help="Path to JSON with labels+probs or explanation (+ optional image_id). From inference or other scripts.",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Write result to this file (explain → JSON; personalize → text).",
+    )
+    parser.add_argument(
+        "--image_id",
+        type=str,
+        default=None,
+        help="Override or set image/study ID for personalized report (e.g. path to x-ray image).",
+    )
+    parser.add_argument("--model", type=str, default="llama3.1:8b", help="Ollama model name.")
+    parser.add_argument("--host", type=str, default="http://localhost:11434", help="Ollama API host.")
+    args = parser.parse_args()
+
+    if args.input:
+        loaded = load_inputs_from_file(args.input)
+        image_id = args.image_id or loaded.get("image_id")
+        if args.mode == "explain":
+            if "explanation" in loaded:
+                result = json.dumps(loaded["explanation"], indent=2)
+            else:
+                obj = explain_chexpert_outputs(
+                    loaded["labels"], loaded["probs"], model=args.model, host=args.host
+                )
+                result = json.dumps(obj, indent=2)
+            if args.output:
+                Path(args.output).write_text(result, encoding="utf-8")
+            print(result)
+        else:
+            if "explanation" in loaded:
+                report = write_personalized_report(
+                    explanation=loaded["explanation"],
+                    image_id=image_id,
+                    model=args.model,
+                    host=args.host,
+                )
+            else:
+                report = write_personalized_report(
+                    labels=loaded["labels"],
+                    probs=loaded["probs"],
+                    image_id=image_id,
+                    model=args.model,
+                    host=args.host,
+                )
+            if args.output:
+                Path(args.output).write_text(report, encoding="utf-8")
+            print(report)
+    else:
+        parser.print_help()
+        print("\nExample: save labels+probs from inference, then run:")
+        print('  python scripts/LLMollama.py --input inference_output.json --output report.txt --image_id "path/to/xray.png"')
+        print("  python scripts/LLMollama.py --input explanation.json --mode personalize --output report.txt")

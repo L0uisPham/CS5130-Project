@@ -1,0 +1,35 @@
+{
+  "labels": [
+    "No Finding",
+    "Enlarged Cardiomediastinum",
+    "Cardiomegaly",
+    "Lung Opacity",
+    "Lung Lesion",
+    "Edema",
+    "Consolidation",
+    "Pneumonia",
+    "Atelectasis",
+    "Pneumothorax",
+    "Pleural Effusion",
+    "Pleural Other",
+    "Fracture",
+    "Support Devices"
+  ],
+  "probs": [
+    0.05,
+    0.25,
+    0.88,
+    0.45,
+    0.12,
+    0.35,
+    0.22,
+    0.18,
+    0.4,
+    0.08,
+    0.79,
+    0.15,
+    0.05,
+    0.62
+  ],
+  "image_id": "example_study_001.png"
+}
