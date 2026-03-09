@@ -1,0 +1,9 @@
+{
+  "name": "Chest X-ray AI Analysis – Build Screen",
+  "id": "chest-xray-ai-analysis-build",
+  "api": "1.0.0",
+  "main": "code.js",
+  "documentAccess": "dynamic-page",
+  "editorType": ["figma"],
+  "description": "Creates the Chest X-ray AI Analysis screen layout (header + 3 columns). Frame names document API connections: POST /analyze → response.labels, response.llm."
+}

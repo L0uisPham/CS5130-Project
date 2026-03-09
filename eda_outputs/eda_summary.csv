@@ -1,0 +1,2 @@
+rows,cols,memory_mb,frac_ap_pa_missing,frac_frontal,frac_lateral,age_mean,age_median,age_min,age_max
+223414,19,88.42720890045166,0.14496405775824253,0.8550359422417575,0.14496405775824253,60.52766165056801,62.0,0.0,110.0

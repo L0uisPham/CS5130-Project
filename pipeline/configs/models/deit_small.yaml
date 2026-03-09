@@ -1,0 +1,5 @@
+model:
+  name: hf_deit_small
+  pretrained: true
+  hf_name: facebook/deit-small-patch16-224
+

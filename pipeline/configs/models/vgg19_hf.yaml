@@ -1,0 +1,5 @@
+model:
+  name: hf_vgg19
+  pretrained: true
+  hf_name: keras/vgg_19_imagenet
+

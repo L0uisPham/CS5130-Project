@@ -1,0 +1,5 @@
+This interpretation is based on model outputs for this specific study (Study/image: example_study_001.png).
+
+Model outputs suggest possible findings: Cardiomegaly (Present), Pleural Effusion (Present). For research/education only.
+
+Key findings from the model are listed in the structured explanation. Differential considerations and suggested next steps should be discussed with a qualified provider. This is for research and education only; it is not medical advice or a definitive diagnosis.

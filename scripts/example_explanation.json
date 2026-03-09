@@ -1,0 +1,85 @@
+{
+  "summary": "Model outputs suggest possible findings: Cardiomegaly (Present), Pleural Effusion (Present). For research/education only.",
+  "ranked_findings": [
+    {
+      "label": "Cardiomegaly",
+      "status": "Present",
+      "prob": 0.88,
+      "rationale": "Probability 0.88 maps to Present."
+    },
+    {
+      "label": "Pleural Effusion",
+      "status": "Present",
+      "prob": 0.79,
+      "rationale": "Probability 0.79 maps to Present."
+    },
+    {
+      "label": "Support Devices",
+      "status": "Uncertain",
+      "prob": 0.62,
+      "rationale": "Probability 0.62 maps to Uncertain."
+    },
+    {
+      "label": "Lung Opacity",
+      "status": "Uncertain",
+      "prob": 0.45,
+      "rationale": "Probability 0.45 maps to Uncertain."
+    },
+    {
+      "label": "Atelectasis",
+      "status": "Uncertain",
+      "prob": 0.4,
+      "rationale": "Probability 0.40 maps to Uncertain."
+    },
+    {
+      "label": "Edema",
+      "status": "Uncertain",
+      "prob": 0.35,
+      "rationale": "Probability 0.35 maps to Uncertain."
+    },
+    {
+      "label": "Enlarged Cardiomediastinum",
+      "status": "Not present",
+      "prob": 0.25,
+      "rationale": "Probability 0.25 maps to Not present."
+    },
+    {
+      "label": "Consolidation",
+      "status": "Not present",
+      "prob": 0.22,
+      "rationale": "Probability 0.22 maps to Not present."
+    },
+    {
+      "label": "Pneumonia",
+      "status": "Not present",
+      "prob": 0.18,
+      "rationale": "Probability 0.18 maps to Not present."
+    },
+    {
+      "label": "Pleural Other",
+      "status": "Not present",
+      "prob": 0.15,
+      "rationale": "Probability 0.15 maps to Not present."
+    }
+  ],
+  "differential": [
+    {
+      "condition": "Clinical correlation recommended",
+      "confidence": "low",
+      "why": "Based on model outputs."
+    },
+    {
+      "condition": "Consider prior imaging comparison",
+      "confidence": "low",
+      "why": "Routine follow-up."
+    }
+  ],
+  "recommended_actions": [
+    {
+      "action": "Correlate with clinical history and prior studies",
+      "urgency": "routine",
+      "note": "Non-prescriptive."
+    }
+  ],
+  "safety_note": "Research/education use only; not medical advice or a definitive diagnosis."
+}

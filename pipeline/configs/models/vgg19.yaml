@@ -1,0 +1,3 @@
+model:
+  name: vgg19
+  pretrained: true
