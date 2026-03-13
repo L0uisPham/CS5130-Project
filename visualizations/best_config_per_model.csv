@@ -1,0 +1,7 @@
+folder_model,config_id,epoch,mean_val_label_auc
+convnext_t,3e-4_3e-5_1e-2,6,0.795293986363132
+deit_small,1e-4_3e-5_1e-2,7,0.7924669900400371
+efficientnet_b4,1e-4_3e-5_1e-2,6,0.787726376888006
+resnet34,3e-4_3e-5_1e-3,7,0.7894248523036337
+swin_tiny,1e-4_3e-5_1e-3,8,0.7923977518404636
+vgg19_hf,1e-4_3e-5_1e-2,8,0.7870465885587764
