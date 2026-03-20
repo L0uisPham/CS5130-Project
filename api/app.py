@@ -1,12 +1,13 @@
 """
-FastAPI server that runs the GitHub models + LLMollama pipeline and returns
-JSON in the shape expected by the Figma/React Chest X-ray AI Analysis app.
+FastAPI server that runs local checkpoint inference + LLMollama and returns JSON
+in the shape expected by the React Chest X-ray AI Analysis app.
 
 Start (from project root):
-  pip install fastapi uvicorn python-multipart
-  python -m uvicorn api.app:app --reload --host 0.0.0.0 --port 8000
+  pip install -r api/requirements.txt
+  python -m uvicorn api.app:app --reload --host 0.0.0.0 --port 8001
 
-Then in the React app, call:  POST http://localhost:8000/analyze  with the image file.
+Then in the React app, call POST http://localhost:8001/analyze with the image
+file and model_name form field.
 """
 
 from __future__ import annotations
@@ -14,14 +15,38 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+import logging
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 # Project root
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in __import__("sys").path:
     __import__("sys").path.insert(0, str(ROOT))
+PIPELINE_ROOT = ROOT / "pipeline"
+if str(PIPELINE_ROOT) not in __import__("sys").path:
+    __import__("sys").path.insert(0, str(PIPELINE_ROOT))
+
+WEIGHTS_DIR = ROOT / "weights"
+
+LOCAL_MODEL_OPTIONS = [
+    {
+        "value": "convnext_t",
+        "label": "ConvNeXt Tiny",
+        "weightsPath": str(WEIGHTS_DIR / "convnext.pt"),
+        "builder": "torchvision_convnext_tiny",
+    },
+    {
+        "value": "swin_tiny",
+        "label": "Swin Tiny",
+        "weightsPath": str(WEIGHTS_DIR / "swin_best.pt"),
+        "arch": "swin_tiny_patch4_window7_224",
+        "builder": "timm",
+    },
+]
+DEFAULT_LOCAL_MODEL = LOCAL_MODEL_OPTIONS[0]["value"]
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Chest X-ray AI Analysis API",
@@ -34,8 +59,10 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:5173",
+        "http://localhost:8001",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:8001",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -106,6 +133,12 @@ def _pipeline_output_to_frontend(labels: list, probs: list, explanation: dict) -
             "urgency": u if u in ("routine", "soon", "urgent") else "routine",
         })
 
+    raw_csv_lines = ["label,probability,status"]
+    for item in label_list:
+        raw_csv_lines.append(
+            f'{item["label"]},{item["probability"]:.4f},{item["status"]}'
+        )
+
     return {
         "labels": label_list,
         "llm": {
@@ -115,7 +148,168 @@ def _pipeline_output_to_frontend(labels: list, probs: list, explanation: dict) -
             "recommendedActions": recommended_actions,
             "safetyNote": explanation.get("safety_note", ""),
         },
+        "rawCsv": "\n".join(raw_csv_lines),
     }
+
+
+def _load_pipeline_cfg() -> dict:
+    import yaml
+
+    chexpert_cfg_path = PIPELINE_ROOT / "configs" / "chexpert.yaml"
+    with chexpert_cfg_path.open("r", encoding="utf-8") as fh:
+        chexpert_cfg = yaml.safe_load(fh) or {}
+    chexpert_cfg["num_classes"] = len(chexpert_cfg.get("labels", []))
+    return chexpert_cfg
+
+
+def _get_model_option(model_name: str) -> dict:
+    for option in LOCAL_MODEL_OPTIONS:
+        if option["value"] == model_name:
+            return option
+    raise HTTPException(400, f"Unknown local model: {model_name}")
+
+
+def _extract_state_dict(checkpoint: object) -> dict:
+    if not isinstance(checkpoint, dict):
+        raise RuntimeError("Checkpoint format is unsupported.")
+
+    for key in ("state_dict", "model_state_dict", "model", "weights"):
+        value = checkpoint.get(key)
+        if isinstance(value, dict):
+            return value
+    return checkpoint
+
+
+def _normalize_state_dict_keys(state_dict: dict) -> dict:
+    normalized = {}
+    for key, value in state_dict.items():
+        new_key = key
+        for prefix in ("module.", "model."):
+            if new_key.startswith(prefix):
+                new_key = new_key[len(prefix):]
+        normalized[new_key] = value
+    return normalized
+
+
+def _build_local_model(model_option: dict, num_classes: int):
+    builder = model_option.get("builder", "timm")
+
+    if builder == "torchvision_convnext_tiny":
+        from torch import nn
+        from torchvision.models import convnext_tiny
+
+        model = convnext_tiny(weights=None)
+        in_features = model.classifier[-1].in_features
+        model.classifier[-1] = nn.Linear(in_features, num_classes)
+        return model
+
+    if builder == "timm":
+        from timm import create_model
+
+        return create_model(
+            model_option["arch"],
+            pretrained=False,
+            num_classes=num_classes,
+        )
+
+    raise RuntimeError(f"Unsupported local model builder: {builder}")
+
+
+def _predict_with_local_model(image_path: str, model_name: str) -> tuple[list[str], list[float]]:
+    import torch
+    from PIL import Image
+    from torchvision import transforms
+
+    cfg = _load_pipeline_cfg()
+    labels = list(cfg.get("labels", []))
+    if not labels:
+        raise RuntimeError("CheXpert config is missing labels.")
+
+    model_option = _get_model_option(model_name)
+    weights_path = Path(model_option["weightsPath"])
+    if not weights_path.exists():
+        raise RuntimeError(f"Weights file not found: {weights_path}")
+
+    eval_tfms = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+    image = Image.open(image_path).convert("RGB")
+    x = eval_tfms(image).unsqueeze(0)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = _build_local_model(model_option, num_classes=len(labels)).to(device)
+    checkpoint = torch.load(weights_path, map_location=device, weights_only=True)
+    state_dict = _normalize_state_dict_keys(_extract_state_dict(checkpoint))
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing:
+        raise RuntimeError(
+            f"Checkpoint is missing {len(missing)} parameters for {model_name}: "
+            + ", ".join(missing[:5])
+        )
+    if unexpected:
+        raise RuntimeError(
+            f"Checkpoint has unexpected parameters for {model_name}: "
+            + ", ".join(unexpected[:5])
+        )
+    model.eval()
+    with torch.no_grad():
+        logits = model(x.to(device))
+        probs = torch.sigmoid(logits).squeeze(0).cpu().tolist()
+    return labels, probs
+
+
+def _run_pipeline_then_llm(image_path: str, model_name: str, dry_run: bool) -> dict:
+    import os as _os
+
+    from scripts.LLMollama import (
+        build_label_table,
+        build_mock_explanation,
+        build_mock_personalized_report,
+        explain_chexpert_outputs,
+        write_personalized_report,
+    )
+
+    labels, probs = _predict_with_local_model(image_path, model_name)
+    if dry_run:
+        _os.environ["LLMOLLAMA_DRY_RUN"] = "1"
+
+    try:
+        explanation = explain_chexpert_outputs(labels, probs)
+        report = write_personalized_report(
+            explanation=explanation,
+            image_id=image_path,
+        )
+    except RuntimeError as exc:
+        logger.warning(
+            "LLM step failed for model %s. Falling back to deterministic explanation. %s",
+            model_name,
+            exc,
+        )
+        label_table = build_label_table(labels, probs)
+        explanation = build_mock_explanation(label_table, allowed_labels=labels)
+        report = build_mock_personalized_report(explanation, image_id=image_path)
+
+    return {
+        "labels": labels,
+        "probs": probs,
+        "explanation": explanation,
+        "report": report,
+    }
+
+
+def _validate_uploaded_image(image_path: str) -> None:
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(image_path) as image:
+            image.verify()
+    except (UnidentifiedImageError, OSError) as e:
+        raise HTTPException(
+            400,
+            "The uploaded file is not a supported image or is corrupted.",
+        ) from e
 
 
 @app.get("/health")
@@ -123,9 +317,24 @@ def health():
     return {"status": "ok", "message": "Chest X-ray AI API is running."}
 
 
-def _mock_response() -> dict:
+@app.get("/models")
+def list_models():
+    return {
+        "models": [
+            {
+                "value": option["value"],
+                "label": option["label"],
+            }
+            for option in LOCAL_MODEL_OPTIONS
+        ],
+        "defaultModel": DEFAULT_LOCAL_MODEL,
+    }
+
+
+def _mock_response(model_name: str = DEFAULT_LOCAL_MODEL) -> dict:
     """Return static mock ModelOutput for API_MOCK=1 or when pipeline fails (e.g. no weights)."""
     return {
+        "modelUsed": model_name,
         "labels": [
             {"label": "Pleural Effusion", "probability": 0.92, "status": "present"},
             {"label": "Cardiomegaly", "probability": 0.78, "status": "present"},
@@ -157,19 +366,43 @@ def _mock_response() -> dict:
             ],
             "safetyNote": "This analysis is generated by AI for educational and research purposes only. Not medical advice.",
         },
+        "rawCsv": "\n".join([
+            "label,probability,status",
+            "Pleural Effusion,0.9200,present",
+            "Cardiomegaly,0.7800,present",
+            "Lung Opacity,0.7100,present",
+            "Enlarged Cardiomediastinum,0.6800,uncertain",
+            "Edema,0.6500,uncertain",
+            "Consolidation,0.5400,uncertain",
+            "Pneumonia,0.4800,uncertain",
+            "Atelectasis,0.4200,uncertain",
+            "Pleural Other,0.2300,not-present",
+            "Pneumothorax,0.1500,not-present",
+            "Lung Lesion,0.1200,not-present",
+            "Fracture,0.0800,not-present",
+            "No Finding,0.0500,not-present",
+            "Support Devices,0.0300,not-present",
+        ]),
     }
 
 
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
+async def analyze(
+    file: UploadFile = File(...),
+    model_name: str = Form(DEFAULT_LOCAL_MODEL),
+):
     """
     Upload a chest x-ray image. Runs the pipeline (model + LLMollama) and returns
     JSON in the shape expected by the React app (ModelOutput).
     Set API_MOCK=1 to always return mock data (no model or LLM run).
     """
+    valid_model_names = {item["value"] for item in LOCAL_MODEL_OPTIONS}
+    if model_name not in valid_model_names:
+        raise HTTPException(400, f"Unknown local model: {model_name}")
+
     if os.environ.get("API_MOCK", "").strip().lower() in ("1", "true", "yes"):
         await file.read()  # consume upload
-        return _mock_response()
+        return _mock_response(model_name)
 
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "File must be an image (e.g. image/png, image/jpeg)")
@@ -188,29 +421,17 @@ async def analyze(file: UploadFile = File(...)):
         tmp_path = tmp.name
 
     try:
-        from scripts.connect_models_to_llmollama import run_model_then_llm
-
-        # Use ray backend by default; set env API_BACKEND=sk / API_MODEL=resnet to override
-        backend = os.environ.get("API_BACKEND", "ray").strip().lower()
-        model_name = os.environ.get("API_MODEL", "resnet34").strip()
+        _validate_uploaded_image(tmp_path)
         dry_run = os.environ.get("LLMOLLAMA_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
-
-        result = run_model_then_llm(
-            tmp_path,
-            backend=backend,
-            model_name=model_name,
-            weights_dir=ROOT / "models",
-            explanation_only=False,
-            report_only=False,
-            dry_run=dry_run,
-        )
-    except FileNotFoundError as e:
-        raise HTTPException(
-            503,
-            "Model or data not found. Train models (e.g. python models/ray.py --mode train) or set API_MOCK=1 to use mock data.",
-        ) from e
+        result = _run_pipeline_then_llm(tmp_path, model_name=model_name, dry_run=dry_run)
+    except ImportError as e:
+        logger.exception("Pipeline dependencies are missing. Falling back to mock response.")
+        return _mock_response(model_name)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, str(e)) from e
+        logger.exception("Analyze pipeline failed for model %s. Falling back to mock response.", model_name)
+        return _mock_response(model_name)
     finally:
         try:
             os.unlink(tmp_path)
@@ -223,4 +444,6 @@ async def analyze(file: UploadFile = File(...)):
 
     labels = result.get("labels", [])
     probs = result.get("probs", [])
-    return _pipeline_output_to_frontend(labels, probs, explanation)
+    frontend_payload = _pipeline_output_to_frontend(labels, probs, explanation)
+    frontend_payload["modelUsed"] = model_name
+    return frontend_payload

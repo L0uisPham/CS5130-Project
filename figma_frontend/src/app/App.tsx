@@ -1,9 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { UploadDropzone } from "./components/upload-dropzone";
 import { ImageViewerCard } from "./components/image-viewer-card";
 import { ProbabilityRow } from "./components/probability-row";
 import { LLMCard } from "./components/llm-card";
-import { DisclaimerBanner } from "./components/disclaimer-banner";
 import {
   Card,
   CardContent,
@@ -28,7 +27,7 @@ import {
 import { StatusChip } from "./components/status-chip";
 import { Input } from "./components/ui/input";
 
-type AppState = "empty" | "loading" | "results";
+type AppState = "empty" | "loading" | "results" | "error";
 type Status = "present" | "uncertain" | "not-present";
 
 interface Label {
@@ -56,6 +55,7 @@ interface RecommendedAction {
 }
 
 interface ModelOutput {
+  modelUsed?: string;
   labels: Label[];
   llm: {
     summary: string;
@@ -64,6 +64,12 @@ interface ModelOutput {
     recommendedActions: RecommendedAction[];
     safetyNote: string;
   };
+  rawCsv?: string;
+}
+
+interface ModelOption {
+  value: string;
+  label: string;
 }
 
 /**
@@ -172,42 +178,142 @@ const MOCK_OUTPUT: ModelOutput = {
     safetyNote:
       "AI-generated output for educational/research use only. Not a medical device and not for clinical decision-making.",
   },
+  rawCsv: [
+    "label,probability,status",
+    "Pleural Effusion,0.9200,present",
+    "Cardiomegaly,0.7800,present",
+    "Lung Opacity,0.7100,present",
+    "Enlarged Cardiomediastinum,0.6800,uncertain",
+    "Edema,0.6500,uncertain",
+    "Consolidation,0.5400,uncertain",
+    "Pneumonia,0.4800,uncertain",
+    "Atelectasis,0.4200,uncertain",
+    "Pleural Other,0.2300,not-present",
+    "Pneumothorax,0.1500,not-present",
+    "Lung Lesion,0.1200,not-present",
+    "Fracture,0.0800,not-present",
+    "No Finding,0.0500,not-present",
+    "Support Devices,0.0300,not-present",
+  ].join("\n"),
 };
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8001";
+
+const FALLBACK_MODELS: ModelOption[] = [
+  { value: "convnext_t", label: "ConvNeXt Tiny" },
+  { value: "swin_tiny", label: "Swin Tiny" },
+];
 
 function App() {
   const [appState, setAppState] = useState<AppState>("empty");
   const [imageUrl, setImageUrl] = useState<string>("");
+  const [modelOutput, setModelOutput] = useState<ModelOutput | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string>("");
   const [filterMode, setFilterMode] = useState<"all" | "relevant">("all");
   const [studyId, setStudyId] = useState<string>("XR-2026-0221-001");
   const [zoom, setZoom] = useState(100);
+  const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
+  const [selectedModel, setSelectedModel] = useState<string>(FALLBACK_MODELS[0].value);
 
-  // Viewer controls are UI-only (non-functional) for now
-  const [viewerMode, setViewerMode] = useState<"fit" | "zoom">("fit");
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadModels = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/models`);
+        if (!response.ok) {
+          throw new Error(`Model lookup failed with status ${response.status}`);
+        }
+
+        const payload = (await response.json()) as {
+          models?: ModelOption[];
+          defaultModel?: string;
+        };
+
+        if (cancelled || !payload.models?.length) {
+          return;
+        }
+
+        setModels(payload.models);
+        setSelectedModel(payload.defaultModel ?? payload.models[0].value);
+      } catch {
+        if (!cancelled) {
+          setModels(FALLBACK_MODELS);
+        }
+      }
+    };
+
+    void loadModels();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const analyzeFile = async (file: File) => {
+    setErrorMessage("");
+    setModelOutput(null);
+    setAppState("loading");
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("model_name", selectedModel);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/analyze`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const fallbackMessage = `Analysis failed with status ${response.status}`;
+        try {
+          const detail = (await response.json())?.detail;
+          throw new Error(typeof detail === "string" ? detail : fallbackMessage);
+        } catch (error) {
+          if (error instanceof Error) {
+            throw error;
+          }
+          throw new Error(fallbackMessage);
+        }
+      }
+
+      const output = (await response.json()) as ModelOutput;
+      setModelOutput(output);
+      setAppState("results");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "The frontend could not reach the analysis API.";
+      setErrorMessage(message);
+      setAppState("error");
+    }
+  };
 
   const handleFileSelect = (file: File) => {
     const url = URL.createObjectURL(file);
     setImageUrl(url);
-    setAppState("loading");
-
-    // Simulate processing
-    setTimeout(() => {
-      setAppState("results");
-    }, 1800);
+    void analyzeFile(file);
   };
 
   const handleUseSample = () => {
-    // For a mock: you can point this to a static asset later.
-    // For now: just transition to "results" with a placeholder
-    setImageUrl(""); // keep empty or set to "/sample-xray.png" if you add an asset
-    setAppState("loading");
-    setTimeout(() => setAppState("results"), 900);
+    setImageUrl("");
+    setErrorMessage("");
+    setModelOutput({
+      ...MOCK_OUTPUT,
+      modelUsed: selectedModel,
+    });
+    setAppState("results");
   };
 
   const handleReset = () => {
     setAppState("empty");
     setImageUrl("");
+    setModelOutput(null);
+    setErrorMessage("");
     setFilterMode("all");
-    setViewerMode("fit");
     setZoom(100);
   };
 
@@ -215,7 +321,6 @@ function App() {
   const handleZoomOut = () => setZoom((z) => Math.max(z - 25, 10));
   const handleFit = () => {
     setZoom(100);
-    setViewerMode("fit");
   };
   const handleZoomReset = () => {
     setZoom(100);
@@ -225,10 +330,13 @@ function App() {
   };
 
   const handleExportJSON = () => {
+    if (!modelOutput) {
+      return;
+    }
     const exportData = {
       studyId,
       timestamp: new Date().toISOString(),
-      modelOutput: MOCK_OUTPUT,
+      modelOutput,
     };
     const blob = new Blob([JSON.stringify(exportData, null, 2)], {
       type: "application/json",
@@ -244,15 +352,18 @@ function App() {
   };
 
   const handleDownloadReport = () => {
+    if (!modelOutput) {
+      return;
+    }
     // Create a simple text report
     let report = `CHEST X-RAY AI ANALYSIS REPORT\n`;
     report += `${"=".repeat(50)}\n\n`;
     report += `Study ID: ${studyId}\n`;
     report += `Date: ${new Date().toLocaleDateString()}\n`;
     report += `Time: ${new Date().toLocaleTimeString()}\n\n`;
-    report += `DISCLAIMER: ${MOCK_OUTPUT.llm.safetyNote}\n\n`;
+    report += `DISCLAIMER: ${modelOutput.llm.safetyNote}\n\n`;
     report += `${"=".repeat(50)}\n\n`;
-    report += `SUMMARY:\n${MOCK_OUTPUT.llm.summary}\n\n`;
+    report += `SUMMARY:\n${modelOutput.llm.summary}\n\n`;
     report += `${"=".repeat(50)}\n\n`;
     report += `MODEL PREDICTIONS (CheXpert-14):\n`;
     sortedLabels.forEach((label) => {
@@ -260,19 +371,19 @@ function App() {
     });
     report += `\n${"=".repeat(50)}\n\n`;
     report += `RANKED FINDINGS:\n`;
-    MOCK_OUTPUT.llm.rankedFindings.forEach((finding, idx) => {
+    modelOutput.llm.rankedFindings.forEach((finding, idx) => {
       report += `${idx + 1}. ${finding.label} - ${finding.status} (${(finding.probability * 100).toFixed(1)}%)\n`;
       report += `   ${finding.rationale}\n\n`;
     });
     report += `${"=".repeat(50)}\n\n`;
     report += `POSSIBLE DIFFERENTIALS:\n`;
-    MOCK_OUTPUT.llm.differentials.forEach((diff, idx) => {
+    modelOutput.llm.differentials.forEach((diff, idx) => {
       report += `${idx + 1}. ${diff.condition} (Confidence: ${diff.confidence})\n`;
       report += `   ${diff.reason}\n\n`;
     });
     report += `${"=".repeat(50)}\n\n`;
     report += `RECOMMENDED NEXT STEPS:\n`;
-    MOCK_OUTPUT.llm.recommendedActions.forEach((action, idx) => {
+    modelOutput.llm.recommendedActions.forEach((action, idx) => {
       report += `${idx + 1}. [${action.urgency.toUpperCase()}] ${action.action}\n`;
     });
 
@@ -288,35 +399,27 @@ function App() {
   };
 
   const sortedLabels = useMemo(() => {
+    if (!modelOutput) {
+      return [];
+    }
     const filtered =
       filterMode === "relevant"
-        ? MOCK_OUTPUT.labels.filter((l) => l.status !== "not-present")
-        : MOCK_OUTPUT.labels;
+        ? modelOutput.labels.filter((l) => l.status !== "not-present")
+        : modelOutput.labels;
     return [...filtered].sort((a, b) => b.probability - a.probability);
-  }, [filterMode]);
+  }, [filterMode, modelOutput]);
 
   const topFindings = useMemo(() => {
+    if (!modelOutput) {
+      return [];
+    }
     // Show top 3 "present/uncertain" items for chips
-    const relevant = [...MOCK_OUTPUT.labels]
+    const relevant = [...modelOutput.labels]
       .filter((l) => l.status !== "not-present")
       .sort((a, b) => b.probability - a.probability)
       .slice(0, 3);
     return relevant;
-  }, []);
-
-  const statusLegend = (
-    <div className="flex flex-wrap gap-2 text-xs text-gray-600">
-      <span className="flex items-center gap-2">
-        <StatusChip status="present" /> Present ≥ 0.70
-      </span>
-      <span className="flex items-center gap-2">
-        <StatusChip status="uncertain" /> Uncertain 0.30–0.69
-      </span>
-      <span className="flex items-center gap-2">
-        <StatusChip status="not-present" /> Not &lt; 0.30
-      </span>
-    </div>
-  );
+  }, [modelOutput]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -343,15 +446,20 @@ function App() {
                 <Badge variant="secondary" className="bg-gray-100 text-gray-700 text-xs">
                   JSON Output
                 </Badge>
+                {(modelOutput?.modelUsed ?? selectedModel) && (
+                  <Badge variant="secondary" className="bg-blue-50 text-blue-700 text-xs">
+                    Model: {models.find((model) => model.value === (modelOutput?.modelUsed ?? selectedModel))?.label ?? (modelOutput?.modelUsed ?? selectedModel)}
+                  </Badge>
+                )}
               </div>
             </div>
 
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" disabled={appState !== "results"} className="h-8 text-xs" onClick={handleExportJSON}>
+              <Button variant="outline" size="sm" disabled={appState !== "results" || !modelOutput} className="h-8 text-xs" onClick={handleExportJSON}>
                 <Download className="w-3 h-3 mr-1" />
                 Export JSON
               </Button>
-              <Button variant="outline" size="sm" disabled={appState !== "results"} className="h-8 text-xs" onClick={handleDownloadReport}>
+              <Button variant="outline" size="sm" disabled={appState !== "results" || !modelOutput} className="h-8 text-xs" onClick={handleDownloadReport}>
                 <Download className="w-3 h-3 mr-1" />
                 Download Report
               </Button>
@@ -388,11 +496,28 @@ function App() {
                       <ImageIcon className="w-4 h-4 text-gray-600" />
                       Upload X-ray
                     </CardTitle>
-                    <CardDescription className="text-xs">
-                      PNG/JPG. De-identified only.
+                  <CardDescription className="text-xs">
+                      PNG/JPG. Pick a local checkpoint, then upload a de-identified study.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-gray-700" htmlFor="model-select">
+                        Inference model
+                      </label>
+                      <select
+                        id="model-select"
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        className="h-9 w-full rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none focus:border-gray-400"
+                      >
+                        {models.map((model) => (
+                          <option key={model.value} value={model.value}>
+                            {model.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <UploadDropzone onFileSelect={handleFileSelect} />
                     <div className="flex items-center gap-2">
                       <Button size="sm" onClick={handleUseSample}>
@@ -443,13 +568,18 @@ function App() {
               </>
             )}
 
-            {(appState === "loading" || appState === "results") && (
+            {(appState === "loading" || appState === "results" || appState === "error") && (
               <>
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-semibold">X-ray Viewer</h2>
-                  <Button variant="ghost" size="sm" onClick={handleReset} className="h-7 text-xs">
-                    New
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">
+                      {models.find((model) => model.value === (modelOutput?.modelUsed ?? selectedModel))?.label ?? "Local model"}
+                    </span>
+                    <Button variant="ghost" size="sm" onClick={handleReset} className="h-7 text-xs">
+                      New
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Viewer toolbar mock (can wire later) */}
@@ -499,6 +629,19 @@ function App() {
                     />
                   </CardContent>
                 </Card>
+                {appState === "error" && (
+                  <Card className="border-red-200 bg-red-50">
+                    <CardContent className="py-3">
+                      <p className="text-xs font-medium text-red-900">Analysis failed</p>
+                      <p className="text-xs text-red-800 mt-1 leading-relaxed">
+                        {errorMessage}
+                      </p>
+                      <p className="text-xs text-red-700 mt-2">
+                        Start the API on port 8001 or use the sample flow while the backend is offline.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
               </>
             )}
           </div>
@@ -571,7 +714,7 @@ function App() {
                   </div>
                 )}
 
-                {appState === "results" && (
+                {appState === "results" && modelOutput && (
                   <div className="overflow-x-auto max-h-[calc(100vh-280px)] overflow-y-auto">
                     {/* Legend */}
                     <div className="flex flex-col gap-1 text-xs text-gray-600 pb-2 min-w-max">
@@ -657,7 +800,7 @@ function App() {
               </div>
             )}
 
-            {appState === "results" && (
+            {appState === "results" && modelOutput && (
               <div className="space-y-3">
                 {/* Sticky safety note */}
                 <Card className="border-amber-200 bg-amber-50">
@@ -684,12 +827,12 @@ function App() {
                   title="AI Findings Summary"
                   description="Generated from model outputs"
                 >
-                  <p className="text-xs leading-relaxed">{MOCK_OUTPUT.llm.summary}</p>
+                  <p className="text-xs leading-relaxed">{modelOutput.llm.summary}</p>
                 </LLMCard>
 
                 <LLMCard title="Ranked Findings">
                   <div className="space-y-2">
-                    {MOCK_OUTPUT.llm.rankedFindings.map((finding, idx) => (
+                    {modelOutput.llm.rankedFindings.map((finding, idx) => (
                       <div key={idx} className="p-2 bg-gray-50 rounded border overflow-hidden">
                         <div className="flex items-start justify-between mb-1 gap-2">
                           <span className="text-xs font-medium text-gray-800 flex-1">
