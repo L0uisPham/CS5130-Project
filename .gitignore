@@ -224,3 +224,4 @@ models/*
 !models/.gitkeep
 runs/
 .DS_Store
+*.pt
