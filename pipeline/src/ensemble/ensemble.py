@@ -182,8 +182,7 @@ class Ensemble:
 
         return final_preds
     
-e = Ensemble()
-
-results = e.inference("test_xray.jpg")
-
-print(results)
+if __name__ == "__main__":
+    e = Ensemble()
+    results = e.inference("test_xray.jpg")
+    print(results)
