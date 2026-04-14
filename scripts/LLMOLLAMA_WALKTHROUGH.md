@@ -151,7 +151,7 @@ To test with an example x-ray (no real image file needed for LLM step), use the 
 Use **`scripts/connect_models_to_llmollama.py`** to run your trained models on an image and feed their outputs into LLMollama in one step.
 
 - **models/ray.py** (ResNet34, EfficientNet-B4): `--backend ray --model resnet34` or `--model effb4`. Requires trained weights in `models/` (e.g. `resnet34_chexpert.pt`).
-- **sk/inference** (deit, swin, resnet, vgg, efficient): `--backend sk --model resnet` (or deit, swin, vgg, efficient). Uses weights in `sk/tuned_models/`.
+- **scripts/sk/inference** (deit, swin, resnet, vgg, efficient): `--backend sk --model resnet` (or deit, swin, vgg, efficient). Uses weights in `scripts/sk/tuned_models/`.
 
 Example:
 

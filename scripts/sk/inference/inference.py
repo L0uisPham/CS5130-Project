@@ -7,7 +7,10 @@ from timm import create_model
 from PIL import Image
 from torchvision import transforms
 
-from sk.dataset.chexpert import CheXpert
+from scripts.sk.dataset.chexpert import CheXpert
+
+
+SK_ROOT = Path(__file__).resolve().parents[1]
 
 # Same eval transform as CheXpert test set (Resize 224, ToTensor, ImageNet normalize)
 EVAL_TRANSFORM = transforms.Compose([
@@ -33,8 +36,7 @@ class Inference:
             raise ValueError(
                 f"{self.model_name} is not supported. Choose from {list(self.MODEL_NAME_DICTIONARY.keys())}.")
 
-        self.model_path = Path(
-            f"sk/tuned_models/best_{self.model_name}_model.pth")
+        self.model_path = SK_ROOT / "tuned_models" / f"best_{self.model_name}_model.pth"
         if not self.model_path.exists():
             raise FileNotFoundError(f"Model not found: {self.model_path}")
 

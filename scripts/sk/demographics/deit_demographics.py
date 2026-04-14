@@ -1,4 +1,5 @@
 import torch
+from pathlib import Path
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -7,8 +8,11 @@ from sklearn.metrics import roc_auc_score, accuracy_score, mean_absolute_error
 from sklearn.model_selection import train_test_split
 import numpy as np
 
-from sk.dataset.chexpert import CheXpertDataset
-from sk.model_wrappers.deit import DeiTModel
+from scripts.sk.dataset.chexpert import CheXpertDataset
+from scripts.sk.model_wrappers.deit import DeiTModel
+
+
+SK_ROOT = Path(__file__).resolve().parents[1]
 
 # -------------------------------------------------
 # Device
@@ -55,7 +59,7 @@ model = DeiTModel(
 ).to(device)
 
 model.load_state_dict(
-    torch.load("sk/tuned_models/best_deit_model.pth", map_location=device)
+    torch.load(SK_ROOT / "tuned_models" / "best_deit_model.pth", map_location=device)
 )
 
 model.eval()
@@ -178,4 +182,3 @@ OUTPUT
 Sex probe - AUC: 0.5652 [0.3939, 0.7366], Accuracy: 0.7746
 Age probe - MAE: 0.2821 [0.2250, 0.3451]
 """
-

@@ -1,8 +1,12 @@
-import os
+from pathlib import Path
+
 from sklearn.metrics import roc_auc_score
 import torch
 from timm import create_model
-from sk.dataset.chexpert import CheXpert
+from scripts.sk.dataset.chexpert import CheXpert
+
+
+SK_ROOT = Path(__file__).resolve().parent
 
 
 class Trainer:
@@ -138,8 +142,9 @@ class Trainer:
         return total_loss / len(loader), aurocs
 
     def training_loop(self):
-        os.makedirs("sk/tuned_models", exist_ok=True)
-        self.model_path = f"sk/tuned_models/best_{self.model_name}_model.pth"
+        tuned_models_dir = SK_ROOT / "tuned_models"
+        tuned_models_dir.mkdir(parents=True, exist_ok=True)
+        self.model_path = tuned_models_dir / f"best_{self.model_name}_model.pth"
 
         for epoch in range(self.NUM_EPOCHS):
             print(f"\nEpoch {epoch + 1}/{self.NUM_EPOCHS}")

@@ -1,5 +1,5 @@
 """
-Connect repo models (sk/inference or models/ray) to LLMollama.
+Connect repo models (scripts/sk/inference or models/ray) to LLMollama.
 
 Runs a CheXpert-style model on an x-ray image to get (labels, probs), then feeds
 that into LLMollama to produce the structured explanation and personalized report.
@@ -9,7 +9,7 @@ Usage (from project root):
   # Use a model trained by models/ray.py (ResNet34 or EfficientNet-B4)
   python scripts/connect_models_to_llmollama.py --image path/to/xray.png --backend ray --model resnet34 --output report.txt
 
-  # Use a model from sk/tuned_models (deit, swin, resnet, vgg, efficient)
+  # Use a model from scripts/sk/tuned_models (deit, swin, resnet, vgg, efficient)
   python scripts/connect_models_to_llmollama.py --image path/to/xray.png --backend sk --model resnet --output report.txt
 
   # Save explanation JSON as well
@@ -56,8 +56,8 @@ def predict_with_ray(image_path: str, model_name: str = "resnet34", weights_dir:
 
 
 def predict_with_sk(image_path: str, model_name: str) -> Tuple[List[str], List[float]]:
-    """Run sk/inference model (deit, swin, resnet, vgg, efficient) on one image. Returns (labels, probs)."""
-    from sk.inference.inference import Inference
+    """Run scripts/sk/inference model (deit, swin, resnet, vgg, efficient) on one image. Returns (labels, probs)."""
+    from scripts.sk.inference.inference import Inference
     inf = Inference(model_name)
     return inf.inference_from_path(image_path)
 
@@ -76,7 +76,7 @@ def run_model_then_llm(
     """
     Run the chosen classifier on the image, then LLMollama to get explanation and/or report.
 
-    backend: "ray" (models/ray.py) or "sk" (sk/inference)
+    backend: "ray" (models/ray.py) or "sk" (scripts/sk/inference)
     model_name: for ray use "resnet34" or "effb4"; for sk use "resnet", "deit", "swin", "vgg", "efficient"
     Returns: {"labels": [...], "probs": [...], "explanation": {...} or None, "report": str or None}
     """
@@ -137,7 +137,7 @@ def main():
     )
     parser.add_argument("--image", required=True, help="Path to chest x-ray image.")
     parser.add_argument("--backend", choices=["ray", "sk"], default="ray",
-                        help="Model source: ray (models/ray.py) or sk (sk/inference).")
+                        help="Model source: ray (models/ray.py) or sk (scripts/sk/inference).")
     parser.add_argument("--model", default="resnet34",
                         help="For ray: resnet34, effb4. For sk: resnet, deit, swin, vgg, efficient.")
     parser.add_argument("--weights-dir", default=None,

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { UploadDropzone } from "./components/upload-dropzone";
 import { ImageViewerCard } from "./components/image-viewer-card";
 import { ProbabilityRow } from "./components/probability-row";
 import { LLMCard } from "./components/llm-card";
+import { DisclaimerBanner } from "./components/disclaimer-banner";
 import {
   Card,
   CardContent,
@@ -19,6 +20,7 @@ import {
   Image as ImageIcon,
   Search,
   Sparkles,
+  X,
   ZoomIn,
   ZoomOut,
   Maximize2,
@@ -29,6 +31,7 @@ import { Input } from "./components/ui/input";
 
 type AppState = "empty" | "loading" | "results" | "error";
 type Status = "present" | "uncertain" | "not-present";
+type LLMState = "idle" | "loading" | "ready" | "error";
 
 interface Label {
   label: string;
@@ -67,9 +70,25 @@ interface ModelOutput {
   rawCsv?: string;
 }
 
+interface LLMOutput {
+  summary: string;
+  rankedFindings: RankedFinding[];
+  differentials: Differential[];
+  recommendedActions: RecommendedAction[];
+  safetyNote: string;
+}
+
 interface ModelOption {
   value: string;
   label: string;
+}
+
+interface RunHistoryEntry {
+  id: string;
+  studyId: string;
+  createdAt: string;
+  imageDataUrl: string;
+  modelOutput: ModelOutput;
 }
 
 /**
@@ -203,18 +222,90 @@ const API_BASE_URL =
 const FALLBACK_MODELS: ModelOption[] = [
   { value: "convnext_t", label: "ConvNeXt Tiny" },
   { value: "swin_tiny", label: "Swin Tiny" },
+  { value: "ensemble", label: "ConvNeXt + Swin Ensemble" },
 ];
+
+const EMPTY_LLM_OUTPUT: LLMOutput = {
+  summary: "",
+  rankedFindings: [],
+  differentials: [],
+  recommendedActions: [],
+  safetyNote: "",
+};
+
+const RUN_HISTORY_STORAGE_KEY = "chest-xray-run-history";
+const MAX_RUN_HISTORY = 20;
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("Could not convert image to data URL."));
+    };
+    reader.onerror = () => reject(new Error("Could not read image file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatRunTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
 
 function App() {
   const [appState, setAppState] = useState<AppState>("empty");
+  const [llmState, setLlmState] = useState<LLMState>("idle");
   const [imageUrl, setImageUrl] = useState<string>("");
   const [modelOutput, setModelOutput] = useState<ModelOutput | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [llmErrorMessage, setLlmErrorMessage] = useState<string>("");
   const [filterMode, setFilterMode] = useState<"all" | "relevant">("all");
   const [studyId, setStudyId] = useState<string>("XR-2026-0221-001");
   const [zoom, setZoom] = useState(100);
   const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
   const [selectedModel, setSelectedModel] = useState<string>(FALLBACK_MODELS[0].value);
+  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const analysisRequestIdRef = useRef(0);
+  const pendingHistoryRef = useRef<{
+    requestId: number;
+    id: string;
+    createdAt: string;
+    studyId: string;
+    imageDataUrl: string;
+  } | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(RUN_HISTORY_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as RunHistoryEntry[];
+      if (Array.isArray(parsed)) {
+        setRunHistory(parsed);
+      }
+    } catch {
+      setRunHistory([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(RUN_HISTORY_STORAGE_KEY, JSON.stringify(runHistory));
+  }, [runHistory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -251,10 +342,30 @@ function App() {
     };
   }, []);
 
-  const analyzeFile = async (file: File) => {
+  const saveRunToHistory = (entry: RunHistoryEntry) => {
+    setRunHistory((current) => [
+      entry,
+      ...current.filter((run) => run.id !== entry.id).slice(0, MAX_RUN_HISTORY - 1),
+    ]);
+    setActiveRunId(entry.id);
+  };
+
+  const analyzeFile = async (file: File, imageDataUrl: string) => {
+    const requestId = ++analysisRequestIdRef.current;
+    const createdAt = new Date().toISOString();
     setErrorMessage("");
+    setLlmErrorMessage("");
+    setLlmState("idle");
     setModelOutput(null);
     setAppState("loading");
+    setActiveRunId(null);
+    pendingHistoryRef.current = {
+      requestId,
+      id: `${studyId}-${createdAt}`,
+      createdAt,
+      studyId,
+      imageDataUrl,
+    };
 
     const formData = new FormData();
     formData.append("file", file);
@@ -279,10 +390,87 @@ function App() {
         }
       }
 
-      const output = (await response.json()) as ModelOutput;
-      setModelOutput(output);
+      const output = (await response.json()) as Omit<ModelOutput, "llm">;
+      const labelsForLLM = output.labels.map((label) => label.label);
+      const probsForLLM = output.labels.map((label) => label.probability);
+
+      if (analysisRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setModelOutput({
+        ...output,
+        llm: EMPTY_LLM_OUTPUT,
+      });
       setAppState("results");
+      setLlmState("loading");
+
+      void (async () => {
+        try {
+          const llmResponse = await fetch(`${API_BASE_URL}/explain`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              labels: labelsForLLM,
+              probs: probsForLLM,
+            }),
+          });
+
+          if (!llmResponse.ok) {
+            const fallbackMessage = `LLM generation failed with status ${llmResponse.status}`;
+            try {
+              const detail = (await llmResponse.json())?.detail;
+              throw new Error(typeof detail === "string" ? detail : fallbackMessage);
+            } catch (error) {
+              if (error instanceof Error) {
+                throw error;
+              }
+              throw new Error(fallbackMessage);
+            }
+          }
+
+          const llm = (await llmResponse.json()) as LLMOutput;
+          if (analysisRequestIdRef.current !== requestId) {
+            return;
+          }
+          setModelOutput((current) => {
+            if (!current) {
+              return current;
+            }
+            const updatedOutput = {
+              ...current,
+              llm,
+            };
+            const pending = pendingHistoryRef.current;
+            if (pending && pending.requestId === requestId) {
+              saveRunToHistory({
+                id: pending.id,
+                studyId: pending.studyId,
+                createdAt: pending.createdAt,
+                imageDataUrl: pending.imageDataUrl,
+                modelOutput: updatedOutput,
+              });
+              pendingHistoryRef.current = null;
+            }
+            return updatedOutput;
+          });
+          setLlmState("ready");
+        } catch (error) {
+          if (analysisRequestIdRef.current !== requestId) {
+            return;
+          }
+          setLlmErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "The frontend could not reach the explanation API.",
+          );
+          setLlmState("error");
+        }
+      })();
     } catch (error) {
+      pendingHistoryRef.current = null;
       const message =
         error instanceof Error
           ? error.message
@@ -293,26 +481,72 @@ function App() {
   };
 
   const handleFileSelect = (file: File) => {
-    const url = URL.createObjectURL(file);
-    setImageUrl(url);
-    void analyzeFile(file);
+    void (async () => {
+      try {
+        const dataUrl = await fileToDataUrl(file);
+        setImageUrl(dataUrl);
+        void analyzeFile(file, dataUrl);
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Could not read the selected image.",
+        );
+        setAppState("error");
+      }
+    })();
   };
 
   const handleUseSample = () => {
-    setImageUrl("");
-    setErrorMessage("");
-    setModelOutput({
+    analysisRequestIdRef.current += 1;
+    pendingHistoryRef.current = null;
+    const sampleOutput = {
       ...MOCK_OUTPUT,
       modelUsed: selectedModel,
-    });
+    };
+    setImageUrl("");
+    setErrorMessage("");
+    setLlmErrorMessage("");
+    setModelOutput(sampleOutput);
     setAppState("results");
+    setLlmState("ready");
+    saveRunToHistory({
+      id: `${studyId}-${Date.now()}`,
+      studyId,
+      createdAt: new Date().toISOString(),
+      imageDataUrl: "",
+      modelOutput: sampleOutput,
+    });
+  };
+
+  const handleSelectRun = (run: RunHistoryEntry) => {
+    analysisRequestIdRef.current += 1;
+    pendingHistoryRef.current = null;
+    setActiveRunId(run.id);
+    setStudyId(run.studyId);
+    setSelectedModel(run.modelOutput.modelUsed ?? selectedModel);
+    setImageUrl(run.imageDataUrl);
+    setModelOutput(run.modelOutput);
+    setAppState("results");
+    setLlmState("ready");
+    setErrorMessage("");
+    setLlmErrorMessage("");
+    setFilterMode("all");
+    setZoom(100);
+  };
+
+  const handleDeleteRun = (runId: string) => {
+    setRunHistory((current) => current.filter((run) => run.id !== runId));
+    setActiveRunId((current) => (current === runId ? null : current));
   };
 
   const handleReset = () => {
+    analysisRequestIdRef.current += 1;
+    pendingHistoryRef.current = null;
     setAppState("empty");
+    setLlmState("idle");
     setImageUrl("");
     setModelOutput(null);
     setErrorMessage("");
+    setLlmErrorMessage("");
     setFilterMode("all");
     setZoom(100);
   };
@@ -421,37 +655,20 @@ function App() {
     return relevant;
   }, [modelOutput]);
 
+  const footerDisclaimer =
+    modelOutput?.llm.safetyNote ||
+    "For research and education only. Not for clinical decision-making.";
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <header className="bg-white border-b">
         <div className="max-w-[1440px] mx-auto px-6 py-3">
           <div className="flex items-start justify-between gap-6">
             <div>
               <h1 className="text-xl font-semibold tracking-tight">
-                Chest X-ray AI Analysis
+                Chest X-ray Analysis
               </h1>
-              <p className="text-xs text-gray-600 mt-0.5">
-                Vision model → CheXpert-14 → Local LLM (Ollama) explanation
-              </p>
-
-              {/* Small "mode" badges make it feel product-y */}
-              <div className="flex gap-2 mt-2">
-                <Badge variant="secondary" className="bg-gray-100 text-gray-700 text-xs">
-                  Research Demo
-                </Badge>
-                <Badge variant="secondary" className="bg-gray-100 text-gray-700 text-xs">
-                  Local Inference
-                </Badge>
-                <Badge variant="secondary" className="bg-gray-100 text-gray-700 text-xs">
-                  JSON Output
-                </Badge>
-                {(modelOutput?.modelUsed ?? selectedModel) && (
-                  <Badge variant="secondary" className="bg-blue-50 text-blue-700 text-xs">
-                    Model: {models.find((model) => model.value === (modelOutput?.modelUsed ?? selectedModel))?.label ?? (modelOutput?.modelUsed ?? selectedModel)}
-                  </Badge>
-                )}
-              </div>
             </div>
 
             <div className="flex items-center gap-2">
@@ -459,7 +676,7 @@ function App() {
                 <Download className="w-3 h-3 mr-1" />
                 Export JSON
               </Button>
-              <Button variant="outline" size="sm" disabled={appState !== "results" || !modelOutput} className="h-8 text-xs" onClick={handleDownloadReport}>
+              <Button variant="outline" size="sm" disabled={appState !== "results" || !modelOutput || llmState !== "ready"} className="h-8 text-xs" onClick={handleDownloadReport}>
                 <Download className="w-3 h-3 mr-1" />
                 Download Report
               </Button>
@@ -483,7 +700,7 @@ function App() {
       </header>
 
       {/* Main */}
-      <div className="max-w-[1440px] mx-auto p-4">
+      <div className="max-w-[1440px] mx-auto p-4 flex-1 w-full">
         <div className="grid grid-cols-3 gap-3">
           {/* LEFT: Upload + Viewer */}
           <div className="space-y-3">
@@ -752,6 +969,67 @@ function App() {
 
           {/* COLUMN 3: LLM Summary + Ranked Findings */}
           <div className="space-y-3">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Run History</CardTitle>
+                <CardDescription className="text-xs">
+                  Saved locally on this browser
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                {runHistory.length === 0 ? (
+                  <div className="h-56 rounded-md border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center">
+                    <p className="text-xs text-gray-600">No saved runs yet.</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Completed analyses will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="h-56 overflow-y-auto rounded-md border border-gray-200 bg-white">
+                    <div className="divide-y divide-gray-100">
+                      {runHistory.map((run) => (
+                        <div
+                          key={run.id}
+                          className={`flex items-start gap-2 px-3 py-3 transition-colors ${
+                            activeRunId === run.id ? "bg-gray-100" : "hover:bg-gray-50"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleSelectRun(run)}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <p className="text-xs font-medium text-gray-900">
+                              {formatRunTimestamp(run.createdAt)}
+                            </p>
+                            <p className="text-xs text-gray-600 mt-1">
+                              Study ID: {run.studyId}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1 truncate">
+                              {models.find((model) => model.value === (run.modelOutput.modelUsed ?? ""))?.label
+                                ?? run.modelOutput.modelUsed
+                                ?? "Saved run"}
+                            </p>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete run ${run.studyId}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleDeleteRun(run.id);
+                            }}
+                            className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             {appState === "empty" && (
               <Card className="bg-gradient-to-b from-gray-50 to-gray-100">
                 <CardContent className="p-8">
@@ -770,91 +1048,50 @@ function App() {
               </Card>
             )}
 
-            {appState === "loading" && (
-              <div className="space-y-3">
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">AI Findings</CardTitle>
-                    <CardDescription className="text-xs">Generating…</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <Skeleton className="h-3 w-full" />
-                    <Skeleton className="h-3 w-full" />
-                    <Skeleton className="h-3 w-3/4" />
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Ranked Findings</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {[...Array(3)].map((_, i) => (
-                      <div key={i} className="p-2 border rounded">
-                        <Skeleton className="h-3 w-full mb-1" />
-                        <Skeleton className="h-3 w-2/3" />
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              </div>
+            {(appState === "loading" || (appState === "results" && llmState === "loading")) && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">AI Findings</CardTitle>
+                  <CardDescription className="text-xs">
+                    {appState === "loading" ? "Waiting for model output…" : "Generating explanation…"}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-11/12" />
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-4/5" />
+                </CardContent>
+              </Card>
             )}
 
-            {appState === "results" && modelOutput && (
+            {appState === "results" && modelOutput && llmState !== "loading" && (
               <div className="space-y-3">
-                {/* Sticky safety note */}
-                <Card className="border-amber-200 bg-amber-50">
-                  <CardContent className="py-3">
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-start gap-2">
-                        <Badge className="bg-amber-100 text-amber-900 text-xs">
-                          Research Only
-                        </Badge>
-                        <div className="flex-1">
-                          <p className="text-xs text-amber-900 leading-relaxed">
-                            AI output for education only. Not for clinical use.
-                          </p>
-                          <p className="text-xs text-amber-800 leading-relaxed mt-1">
-                            For research and education only. Not for clinical decision-making.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
+                {llmState === "error" && (
+                  <Card className="border-amber-200 bg-amber-50">
+                    <CardContent className="py-3">
+                      <p className="text-xs font-medium text-amber-900">LLM explanation unavailable</p>
+                      <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                        {llmErrorMessage || "Classifier results loaded, but the explanation step failed."}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
                 <LLMCard
-                  title="AI Findings Summary"
-                  description="Generated from model outputs"
+                  title="AI Findings"
+                  description="Detailed synthesis generated from model outputs"
                 >
-                  <p className="text-xs leading-relaxed">{modelOutput.llm.summary}</p>
-                </LLMCard>
-
-                <LLMCard title="Ranked Findings">
-                  <div className="space-y-2">
-                    {modelOutput.llm.rankedFindings.map((finding, idx) => (
-                      <div key={idx} className="p-2 bg-gray-50 rounded border overflow-hidden">
-                        <div className="flex items-start justify-between mb-1 gap-2">
-                          <span className="text-xs font-medium text-gray-800 flex-1">
-                            {finding.label}
-                          </span>
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            <span className="text-xs text-gray-600 tabular-nums">
-                              {(finding.probability * 100).toFixed(1)}%
-                            </span>
-                            <StatusChip status={finding.status} />
-                          </div>
-                        </div>
-                        <p className="text-xs text-gray-600 leading-relaxed">{finding.rationale}</p>
-                      </div>
-                    ))}
-                  </div>
+                  <p className="text-xs leading-relaxed whitespace-pre-line">
+                    {modelOutput.llm.summary || "The vision model results are available. The explanation step did not complete."}
+                  </p>
                 </LLMCard>
               </div>
             )}
           </div>
         </div>
       </div>
+      <DisclaimerBanner text={footerDisclaimer} />
     </div>
   );
 }

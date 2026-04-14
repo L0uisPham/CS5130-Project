@@ -57,7 +57,7 @@ You need:
 - **Ollama** running (e.g. `ollama run llama3.1:8b`).
 - **A trained model** from this repo — either:
   - **Ray models**: trained with `models/ray.py` → weights in `models/resnet34_chexpert.pt` or `models/effb4_chexpert.pt`, or
-  - **SK models**: weights in `sk/tuned_models/best_<model>_model.pth` (e.g. `best_resnet_model.pth`).
+  - **SK models**: weights in `scripts/sk/tuned_models/best_<model>_model.pth` (e.g. `best_resnet_model.pth`).
 
 **Run Ollama with real model arrays (no hypothetical probs):**
 
@@ -70,7 +70,7 @@ cd c:\Users\Ray\Desktop\CS5130\CS5130-Project\CS5130-Project
 python scripts/run_ollama_with_model_arrays.py --image "YOUR_IMAGE_PATH" --backend ray --model resnet34 --output report.txt --explanation-out explanation.json
 ```
 
-SK model (needs `sk/tuned_models/best_resnet_model.pth` etc.):
+SK model (needs `scripts/sk/tuned_models/best_resnet_model.pth` etc.):
 
 ```powershell
 python scripts/run_ollama_with_model_arrays.py --image "YOUR_IMAGE_PATH" --backend sk --model resnet --output report.txt

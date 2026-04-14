@@ -75,7 +75,7 @@ def build_label_table(labels: List[str], probs: List[float],
 # 2) Prompt construction
 # -----------------------------
 JSON_SCHEMA_EXAMPLE = {
-    "summary": "1-3 sentence findings summary based ONLY on the labels/probabilities.",
+    "summary": "A concise 2-3 paragraph synthesis that explains which probabilities matter most, what overall pattern they may suggest, where uncertainty remains, and what kinds of follow-up information or review would be most useful next.",
     "ranked_findings": [
         {"label": "Pleural Effusion", "status": "Present", "prob": 0.91, "rationale": "Short reason tied to the probability/status."}
     ],
@@ -89,6 +89,42 @@ JSON_SCHEMA_EXAMPLE = {
 }
 
 
+def _format_prompt_buckets(label_table: List[Dict[str, Any]]) -> str:
+    """
+    Build compact, high-signal guidance from classifier outputs so the LLM can
+    synthesize a useful summary instead of merely restating labels.
+    """
+    present = [row for row in label_table if row["status"] == "Present"]
+    uncertain = [row for row in label_table if row["status"] == "Uncertain"]
+    not_present = [row for row in label_table if row["status"] == "Not present"]
+    very_high = [row for row in label_table if row["prob"] >= 0.85]
+    moderate = [row for row in label_table if 0.50 <= row["prob"] < 0.85]
+    weak = [row for row in label_table if row["prob"] < 0.30]
+
+    def _fmt(rows: List[Dict[str, Any]], limit: int) -> str:
+        if not rows:
+            return "None"
+        return ", ".join(f"{row['label']} ({row['prob']:.2f})" for row in rows[:limit])
+
+    strongest = label_table[:5]
+    near_threshold = [
+        row for row in label_table
+        if 0.25 <= row["prob"] <= 0.75
+    ][:5]
+    notable_negatives = not_present[:5]
+
+    return "\n".join([
+        f"Strongest model signals: {_fmt(strongest, 5)}",
+        f"Very high-confidence signals (>=0.85): {_fmt(very_high, 5)}",
+        f"Moderate-strength signals (0.50-0.84): {_fmt(moderate, 5)}",
+        f"Present findings (>= threshold): {_fmt(present, 5)}",
+        f"Borderline/uncertain findings: {_fmt(uncertain, 5)}",
+        f"Notable negatives / low-signal labels: {_fmt(notable_negatives, 5)}",
+        f"Near-threshold labels to treat cautiously: {_fmt(near_threshold, 5)}",
+        f"Weak/deprioritized signals (<0.30): {_fmt(weak, 5)}",
+    ])
+
+
 def build_prompt(label_table: List[Dict[str, Any]], allowed_labels: List[str]) -> str:
     """
     Build a strict prompt that forces JSON output and limits hallucinations.
@@ -100,9 +136,11 @@ def build_prompt(label_table: List[Dict[str, Any]], allowed_labels: List[str]) -
     table_md = "\n".join(lines)
 
     allowed_list = ", ".join(allowed_labels)
+    prompt_buckets = _format_prompt_buckets(label_table)
 
     prompt = f"""
 You are assisting a research demo that converts chest X-ray classifier outputs into a structured explanation.
+Your job is to turn probabilities into a useful next-step interpretation, not just restate label names.
 You MUST follow these rules:
 
 RULES:
@@ -114,9 +152,30 @@ RULES:
    [{allowed_list}]
 6) Provide a short differential (2-4 items) as possibilities, each with low/medium/high confidence.
 7) Always include a safety_note stating this is for research/education only.
+8) recommended_actions is important. Provide 3-5 specific, non-prescriptive next-step suggestions that are logically tied to the probabilities.
+9) Each recommended_actions item must be generic and safe, but still useful. Prefer actions such as:
+   - correlate with symptoms, exam findings, oxygenation, or labs
+   - compare with prior chest imaging
+   - obtain formal radiologist review
+   - consider short-interval follow-up or additional workup if clinically warranted
+   - flag urgent review only when the strongest probabilities suggest a potentially time-sensitive pattern
+10) Set urgency using the probabilities:
+   - urgent: reserve for patterns with very high probabilities and potentially serious acute findings
+   - soon: use for moderate/high findings that merit timely review or correlation
+   - routine: use when outputs are weak, mixed, or mostly uncertain
+11) The summary is the main user-facing output. It must be a concise text-only synthesis in 2-3 short paragraphs:
+   - paragraph 1: identify the strongest probabilities and explain which findings drive the interpretation
+   - paragraph 2: describe the broader pattern they may suggest, and explicitly mention uncertainty or competing interpretations
+   - paragraph 3: explain what follow-up context, comparison, or review would be most useful next
+12) In ranked_findings rationale, mention the probability strength and why that label matters relative to the others.
+13) If no strong positive findings are present, say that clearly, emphasize uncertainty, and avoid forcing a pattern.
+14) Keep the summary text-only. Do not use markdown bullets or headings inside the summary.
 
 INPUT (model outputs):
 {table_md}
+
+DERIVED CONTEXT (useful synthesis cues, still based only on the table above):
+{prompt_buckets}
 
 OUTPUT FORMAT (example schema; fill with actual content):
 {json.dumps(JSON_SCHEMA_EXAMPLE, ensure_ascii=False)}
@@ -229,13 +288,27 @@ def build_mock_explanation(
     """
     present = [r for r in label_table if r["status"] == "Present"]
     uncertain = [r for r in label_table if r["status"] == "Uncertain"]
+    negatives = [r for r in label_table if r["status"] == "Not present"]
     if present:
         top = present[:3]
-        summary = "Model outputs suggest possible findings: " + ", ".join(
-            f"{r['label']} ({r['status']})" for r in top
-        ) + ". For research/education only."
+        top_text = ", ".join(f"{r['label']} ({r['prob']:.2f})" for r in top)
+        uncertain_text = ", ".join(f"{r['label']} ({r['prob']:.2f})" for r in uncertain[:2])
+        negative_text = ", ".join(f"{r['label']} ({r['prob']:.2f})" for r in negatives[:2])
+        summary = (
+            f"The strongest model signals are {top_text}, and those probabilities should drive the overall interpretation more than the lower-ranked labels.\n\n"
+            "Taken together, these findings may point toward a broader chest radiograph pattern rather than a single isolated process, but the outputs remain probabilistic and should be interpreted cautiously.\n\n"
+        )
+        if uncertain_text:
+            summary += f"Additional borderline or mixed-strength signals include {uncertain_text}, which leaves meaningful uncertainty around the exact pattern and whether multiple explanations remain plausible.\n\n"
+        if negative_text:
+            summary += f"At the same time, lower-signal labels such as {negative_text} are not being prioritized by the model, which helps frame what appears less likely in this output.\n\n"
+        summary += "The most useful next step is to interpret these probabilities alongside symptoms, bedside context, oxygenation or lab data when relevant, and any prior chest imaging for comparison."
     else:
-        summary = "Model outputs show no findings above the present threshold. For research/education only."
+        uncertain_text = ", ".join(f"{r['label']} ({r['prob']:.2f})" for r in uncertain[:3])
+        summary = "No findings are above the present threshold, so the model is not showing a strong positive signal for a dominant abnormality.\n\n"
+        if uncertain_text:
+            summary += f"The main signals are borderline or uncertain, including {uncertain_text}, so the output is better read as indeterminate than as a clear impression.\n\n"
+        summary += "Low-probability labels remain deprioritized, but that should not be overinterpreted as exclusion. The most useful next step is correlation with the clinical question and comparison with prior imaging or formal review if available."
     ranked_findings = [
         {
             "label": r["label"],
@@ -250,9 +323,23 @@ def build_mock_explanation(
         {"condition": "Clinical correlation recommended", "confidence": "low", "why": "Based on model outputs."},
         {"condition": "Consider prior imaging comparison", "confidence": "low", "why": "Routine follow-up."},
     ]
-    recommended_actions = [
-        {"action": "Correlate with clinical history and prior studies", "urgency": "routine", "note": "Non-prescriptive."},
-    ]
+    if present and any(r["prob"] >= 0.85 for r in present):
+        recommended_actions = [
+            {"action": "Obtain timely clinician or radiologist review of the highest-probability findings", "urgency": "soon", "note": "Escalate concern based on the strongest model signals."},
+            {"action": "Correlate the leading findings with symptoms, exam findings, and any available oxygenation or lab data", "urgency": "soon", "note": "Helps determine whether the predicted pattern fits the clinical picture."},
+            {"action": "Compare with prior chest imaging if available", "urgency": "routine", "note": "Useful for assessing chronic versus new change."},
+        ]
+    elif uncertain:
+        recommended_actions = [
+            {"action": "Compare the uncertain findings with prior chest imaging or formal radiology review", "urgency": "routine", "note": "Helpful when probabilities are mixed or borderline."},
+            {"action": "Correlate the leading probabilities with the current clinical question and symptoms", "urgency": "routine", "note": "Supports interpretation without overcalling weak signals."},
+            {"action": "Consider follow-up review if the image was obtained for an acute concern and the clinical picture remains unclear", "urgency": "routine", "note": "Non-prescriptive next-step framing."},
+        ]
+    else:
+        recommended_actions = [
+            {"action": "Use the output as a low-confidence adjunct rather than a standalone interpretation", "urgency": "routine", "note": "No dominant high-probability finding is present."},
+            {"action": "Correlate with the clinical indication and prior studies if available", "urgency": "routine", "note": "Helps contextualize weak signals."},
+        ]
     safety_note = "Research/education use only; not medical advice or a definitive diagnosis."
     return {
         "summary": summary,

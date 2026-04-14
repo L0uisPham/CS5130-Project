@@ -1,14 +1,13 @@
-import { AlertTriangle } from "lucide-react";
-import { Alert, AlertDescription } from "./ui/alert";
+interface DisclaimerBannerProps {
+  text: string;
+}
 
-export function DisclaimerBanner() {
+export function DisclaimerBanner({ text }: DisclaimerBannerProps) {
   return (
-    <Alert className="border-amber-200 bg-amber-50">
-      <AlertTriangle className="h-4 w-4 text-amber-600" />
-      <AlertDescription className="text-amber-800">
-        <strong>For research and education only.</strong> Not for clinical
-        decision-making.
-      </AlertDescription>
-    </Alert>
+    <div className="mx-auto max-w-3xl px-6 pb-6 pt-3 text-center">
+      <p className="text-[11px] leading-5 text-gray-400">
+        {text}
+      </p>
+    </div>
   );
 }

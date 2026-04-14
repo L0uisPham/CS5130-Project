@@ -11,7 +11,7 @@ Usage (from project root):
   # Use ray model (resnet34 or effb4); requires models/resnet34_chexpert.pt etc.
   python scripts/run_ollama_with_model_arrays.py --image path/to/xray.png --backend ray --model resnet34
 
-  # Use sk model (resnet, deit, swin, vgg, efficient); requires sk/tuned_models/
+  # Use sk model (resnet, deit, swin, vgg, efficient); requires scripts/sk/tuned_models/
   python scripts/run_ollama_with_model_arrays.py --image path/to/xray.png --backend sk --model resnet
 
   # Save outputs
@@ -36,7 +36,7 @@ def main() -> None:
         description="Run vision model on image, then pass its label/prob arrays to Ollama (no hypothetical probs)."
     )
     parser.add_argument("--image", required=True, help="Path to chest x-ray image.")
-    parser.add_argument("--backend", choices=["ray", "sk"], default="ray", help="Vision model: ray (models/ray.py) or sk (sk/inference).")
+    parser.add_argument("--backend", choices=["ray", "sk"], default="ray", help="Vision model: ray (models/ray.py) or sk (scripts/sk/inference).")
     parser.add_argument("--model", default="resnet34", help="ray: resnet34, effb4. sk: resnet, deit, swin, vgg, efficient.")
     parser.add_argument("--weights-dir", default=None, help="Weights directory for ray (default: project models/).")
     parser.add_argument("--output", "-o", default=None, help="Write personalized report to this file.")
